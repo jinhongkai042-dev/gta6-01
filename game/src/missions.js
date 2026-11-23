@@ -1,167 +1,145 @@
 import { TILE } from './config.js';
 
 const intersection = (column, row) => ({ x: (column + 0.5) * TILE, y: (row + 0.5) * TILE });
-const pickup = intersection(20, 20);
-const delivery = intersection(24, 36);
-const rendezvous = intersection(20, 32);
-const alarm = intersection(24, 16);
-const refuge = intersection(8, 28);
+const fishMarket = intersection(16, 20);
+const ferry = intersection(24, 12);
+const dispatch = intersection(20, 16);
+const customs = intersection(28, 16);
+const slipway = intersection(12, 28);
 
 export const MISSIONS = [
   {
     id: 1, name: 'First Delivery', reward: 200,
-    story: 'The last ferry leaves in ten. Inez has a parcel of undeveloped film and a harbor pilot willing to carry it. Rex gets one trip to make the handoff.',
+    story: 'The fish auction closed an hour ago. Nessa has one parcel left on the ice and a ferry captain who already pulled the gangway.',
     steps: [
-      { text: 'Collect the film at the signal box.', target: pickup },
-      { text: 'Drive the film to the ferry at Marina Pier.', target: delivery },
+      { text: 'Collect Nessa’s blue parcel at the fish market.', target: fishMarket },
+      { text: 'Drive the parcel to the night ferry.', target: ferry },
     ],
   },
   {
     id: 2, name: 'Tail the Courier', reward: 350,
-    story: 'Someone bought the ferry manifest. Inez left a pistol in the signal crew’s lockbox. Outfit yourself there, then tail the courier to find out where the money goes.',
+    story: 'A dispatch rider sold Rex’s name twice. Nessa wants the address of the second buyer. The courier will lead you there.',
     steps: [
-      { text: 'Collect the signal crew’s lockbox pistol.', target: rendezvous },
-      { text: 'Find the marked courier and fall in behind the car.', target: rendezvous },
-      { text: 'Keep the marked courier in sight for 20 seconds.', target: rendezvous },
+      { text: 'Meet Nessa’s contact beside the marked courier car. Collect the pistol.', target: dispatch },
+      { text: 'Keep the courier in sight for 20 uninterrupted seconds.', target: dispatch },
     ],
   },
   {
     id: 3, name: 'Lose the Cops', reward: 500,
-    story: 'The pilot needs the harbor patrol looking inland. Rex can trip the customs alarm, then disappear while the ferry slips its moorings.',
+    story: 'The ferry is carrying half the market’s wages. Rex promised the captain that every blue light in Marlin Bay would be looking inland.',
     steps: [
-      { text: 'Reach three stars. Trip the customs alarm at the marker.', target: alarm },
-      { text: 'Lose all stars. The old slipway is a place to lay low.', target: refuge },
+      { text: 'Draw three wanted stars. Crossing the customs alarm will do it.', target: customs },
+      { text: 'Break contact and shed every star. The old slipway is a possible escape route.', target: slipway },
     ],
   },
 ];
 
-function setStep(mission, stage) {
-  const step = MISSIONS[mission.id - 1].steps[stage];
-  mission.stage = stage;
-  mission.objective = step.text;
-  mission.target = { ...step.target };
+function setStep(mission, definition, index) {
+  const { text, target } = definition.steps[index];
+  Object.assign(mission, { stage: index, objective: text, target: { ...target } });
 }
 
-function clearCourier(mission) {
+function unmark(mission) {
   if (mission?.courier) {
+    mission.courier.courier = false;
     mission.courier.isCourier = false;
+    mission.courier.marked = false;
     mission.courier = null;
   }
 }
 
-function markCourier(state) {
-  const origin = state.player;
-  let best = Infinity;
-  let selected = null;
-  for (const car of state.cars) {
-    if (car === state.car || car.parked) continue;
-    // Prefer a car a short drive ahead of the player, even at a busy spawn.
-    const cost = Math.abs(Math.hypot(car.x - origin.x, car.y - origin.y) - 145);
-    if (cost < best) {
-      best = cost;
-      selected = car;
-    }
+function trackCourier(state) {
+  const mission = state.mission;
+  let courier = mission.courier;
+  if (!courier || !state.cars.includes(courier) || courier === state.car) {
+    unmark(mission);
+    const distance = car => Math.hypot(car.x - state.player.x, car.y - state.player.y);
+    courier = state.cars.reduce((best, car) => {
+      if (car === state.car || car.parked || car.occupiedByPlayer) return best;
+      return !best || distance(car) < distance(best) ? car : best;
+    }, null);
+    mission.followTime = 0;
+    if (!courier) return null;
+    mission.courier = courier;
+    courier.courier = true;
+    courier.isCourier = true;
+    courier.marked = true;
   }
-  if (selected) {
-    selected.isCourier = true;
-    state.mission.courier = selected;
-    state.mission.target = { x: selected.x, y: selected.y };
-  }
+  mission.target = { x: courier.x, y: courier.y };
+  return courier;
 }
 
 export function startMission(state, id) {
-  const job = MISSIONS.find(entry => entry.id === Number(id));
-  if (!job || state.completedMissions?.includes(job.id)) return;
-  if (state.mission?.id === job.id && !state.mission.done) return;
-  clearCourier(state.mission);
+  const definition = MISSIONS.find(item => item.id === Number(id));
+  if (!definition || state.completedMissions?.includes(definition.id)) return false;
+  if (state.mission?.id === definition.id && !state.mission.done) return true;
+  unmark(state.mission);
   state.mission = {
-    id: job.id, name: job.name, stage: 0, done: false,
-    tailTime: 0, lostTime: 0, alarmTripped: false,
+    id: definition.id, name: definition.name, story: definition.story,
+    reward: definition.reward, done: false, followTime: 0,
   };
-  setStep(state.mission, 0);
+  setStep(state.mission, definition, 0);
+  if (definition.id === 2) trackCourier(state);
+  return true;
 }
 
-function finish(state, message) {
+function finish(state, definition) {
   const mission = state.mission;
-  const job = MISSIONS[mission.id - 1];
-  clearCourier(mission);
   mission.done = true;
-  mission.objective = message;
+  mission.objective = 'Job complete. Open missions (M) for the dispatch board.';
+  unmark(mission);
   state.completedMissions ??= [];
-  if (state.completedMissions.includes(job.id)) return;
-  state.completedMissions.push(job.id);
-  state.player.money += job.reward;
-  state.score += job.reward;
-  state.events.push('mission-done');
-}
-
-function tailCourier(state, dt) {
-  const mission = state.mission;
-  if (mission.stage === 0) {
-    if (Math.hypot(state.player.x - rendezvous.x, state.player.y - rendezvous.y) > 48) return;
-    if (state.player.weapon !== 'pistol') {
-      state.player.weapon = 'pistol';
-      state.player.ammo = 12;
-    }
-    state.events.push('pickup');
-    setStep(mission, 1);
-  }
-  if (!mission.courier || !state.cars.includes(mission.courier) || mission.courier === state.car) {
-    clearCourier(mission);
-    mission.tailTime = 0;
-    mission.lostTime = 0;
-    setStep(mission, 1);
-    markCourier(state);
-  }
-  const car = mission.courier;
-  if (!car) return;
-  mission.target = { x: car.x, y: car.y };
-  const distance = Math.hypot(car.x - state.player.x, car.y - state.player.y);
-  if (mission.stage === 1) {
-    if (distance > 170) return;
-    setStep(mission, 2);
-    mission.target = { x: car.x, y: car.y };
-  }
-  if (distance <= 280) {
-    mission.lostTime = 0;
-    mission.tailTime += dt;
-    mission.objective = 'Keep the courier in sight • ' + Math.ceil(Math.max(0, 20 - mission.tailTime)) + 's';
-    if (mission.tailTime >= 20 - 1e-8) finish(state, 'The manifest buyer is identified. +$350');
-  } else {
-    // A short blind corner pauses the clock. A broken tail costs its accumulated time.
-    mission.lostTime += dt;
-    mission.objective = 'Close the gap before the courier gets away!';
-    if (mission.lostTime >= 2) {
-      mission.tailTime = 0;
-      mission.lostTime = 0;
-      setStep(mission, 1);
-      mission.objective = 'Tail lost. Catch the marked courier and start a fresh 20 seconds.';
-      mission.target = { x: car.x, y: car.y };
-    }
-  }
+  if (state.completedMissions.includes(definition.id)) return;
+  state.completedMissions.push(definition.id);
+  state.player.money += definition.reward;
+  state.score += definition.reward;
+  (state.events ??= []).push('mission-done');
 }
 
 export function updateMission(state, dt) {
-  const m = state.mission;
-  if (!m?.id || m.done) return;
-  if (m.id === 2) return tailCourier(state, dt);
-  const atTarget = Math.hypot(state.player.x - m.target.x, state.player.y - m.target.y) <= 48;
-  if (m.id === 1 && atTarget) {
-    if (m.stage === 0) {
-      setStep(m, 1);
-      state.events.push('pickup');
-    } else if (!state.player.onFoot) {
-      finish(state, 'The film made the ferry. +$200');
+  const mission = state.mission;
+  if (!mission || mission.done) return;
+  const definition = MISSIONS.find(item => item.id === mission.id);
+  if (!definition) return;
+  const player = state.car ?? state.player;
+  const distance = () => Math.hypot(player.x - mission.target.x, player.y - mission.target.y);
+  switch (mission.id) {
+    case 1:
+      if (distance() > 56) return;
+      if (mission.stage === 0) {
+        setStep(mission, definition, 1);
+        (state.events ??= []).push('pickup');
+      } else if (state.car || !state.player.onFoot) {
+        finish(state, definition);
+      }
+      break;
+    case 2: {
+      if (!trackCourier(state)) return;
+      const gap = distance();
+      if (mission.stage === 0 && gap <= 160) {
+        setStep(mission, definition, 1);
+        mission.target = { x: mission.courier.x, y: mission.courier.y };
+        if (state.player.weapon !== 'pistol') {
+          state.player.weapon = 'pistol';
+          state.player.ammo = 12;
+        }
+        (state.events ??= []).push('pickup');
+      } else if (mission.stage === 1) {
+        mission.followTime = gap <= 300 ? Math.min(20, mission.followTime + dt) : 0;
+        mission.objective = gap <= 300
+          ? `Stay with the courier · ${Math.floor(mission.followTime)} / 20 s`
+          : 'Courier lost. Rejoin the marked car to restart the 20-second tail.';
+        if (mission.followTime >= 20 - 1e-8) finish(state, definition);
+      }
+      break;
     }
-  }
-  if (m.id === 3) {
-    if (m.stage === 0 && state.wanted >= 3) {
-      setStep(m, 1);
-    } else if (m.stage === 0 && atTarget && !m.alarmTripped) {
-      state.pendingWanted = (state.pendingWanted || 0) + (3 - state.wanted);
-      m.alarmTripped = true;
-    } else if (m.stage === 1 && state.wanted === 0) {
-      finish(state, 'The ferry cleared the breakwater. +$500');
-    }
+    case 3:
+      if (mission.stage === 0) {
+        if (state.wanted >= 3) setStep(mission, definition, 1);
+        else if (distance() <= 48) state.pendingWanted = Math.max(state.pendingWanted || 0, 3 - state.wanted);
+      } else if (state.wanted === 0) {
+        finish(state, definition);
+      }
+      break;
   }
 }

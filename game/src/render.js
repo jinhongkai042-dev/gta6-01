@@ -13,47 +13,60 @@ import {
   PLAYER_NAME,
 } from './config.js';
 
-const worldCache = new WeakMap();
-
 const BUILDING_PALETTE = [
-  { base: '#f2b8a2', roof: '#fce2d5', trim: '#fff7f2', awning: '#ff6b6b' }, // coral deco
-  { base: '#a5dfd2', roof: '#d7f4ec', trim: '#f2fffc', awning: '#1f9d97' }, // seafoam mint
-  { base: '#f6d58e', roof: '#fdf0c9', trim: '#fffaf0', awning: '#e8833a' }, // butter sandstone
-  { base: '#a8cbe8', roof: '#d8ebf9', trim: '#f3f9ff', awning: '#2a6f97' }, // coastal sky
-  { base: '#e9c7b1', roof: '#f7e5d8', trim: '#fff9f5', awning: '#d95d39' }, // warm terracotta
-  { base: '#d9c2e9', roof: '#efe3f7', trim: '#faf5ff', awning: '#7c5cbf' }, // twilight lilac
-  { base: '#efe6d5', roof: '#faf6ee', trim: '#ffffff', awning: '#2ec4b6' }, // limestone cream
-  { base: '#f3b7c8', roof: '#fce0e8', trim: '#fff5f8', awning: '#e04f7b' }, // flamingo pink
+  { roof: '#f08070', wall: '#c75d4f', trim: '#ffd0c7', style: 'terrace' },
+  { roof: '#5ec9b5', wall: '#3c9c8b', trim: '#c7f5ec', style: 'pool' },
+  { roof: '#f3c15f', wall: '#c79538', trim: '#ffebb8', style: 'hvac' },
+  { roof: '#f4ead6', wall: '#c9bba0', trim: '#ffffff', style: 'skylight' },
+  { roof: '#f28cab', wall: '#c76181', trim: '#ffd6e2', style: 'pool' },
+  { roof: '#6eb8ea', wall: '#478cbd', trim: '#cceaff', style: 'helipad' },
+  { roof: '#f4a578', wall: '#c97b50', trim: '#ffe0cc', style: 'terracotta' },
+  { roof: '#82d4aa', wall: '#55a67d', trim: '#d5f7e6', style: 'terrace' },
+  { roof: '#baa2dc', wall: '#8f77b3', trim: '#e7dcfa', style: 'skylight' },
+  { roof: '#edf2f4', wall: '#bcc8ce', trim: '#ffffff', style: 'hvac' },
 ];
 
 const CAR_COLORS = [
-  '#ef476f',
-  '#2ec4b6',
-  '#ffb703',
-  '#3a86ff',
-  '#fb8500',
-  '#06d6a0',
-  '#f4f7fa',
-  '#9b5de5',
   '#e63946',
+  '#f77f00',
+  '#00b4d8',
+  '#ffd166',
+  '#2ec4b6',
+  '#9b5de5',
+  '#ff6b6b',
+  '#f1faee',
+  '#3a86ff',
+  '#f15bb5',
 ];
 
 const PED_SHIRTS = [
   '#ff6b6b',
   '#4ecdc4',
-  '#ffd166',
-  '#5aa9e6',
-  '#f78c6b',
-  '#b388eb',
-  '#7ae582',
+  '#ffe66d',
   '#ffffff',
+  '#ff9f1c',
+  '#a06cd5',
+  '#2ec4b6',
+  '#ff8fab',
+  '#48cae4',
+  '#90be6d',
 ];
 
-const SKIN_TONES = ['#f5cba7', '#e5b08a', '#c68642', '#8d5524', '#f1c27d'];
-const HAIR_TONES = ['#241b15', '#4a3123', '#8c5a2b', '#d9a441', '#1a1a22'];
+const PED_SKINS = ['#f5d0b5', '#e4b38f', '#c98e68', '#9c6644', '#7a4b2e'];
+const PED_HAIR = ['#1d1e22', '#4a3222', '#8c5a32', '#d4a657', '#2c221e', '#e63946'];
 
-function hash2(a, b, seed = SEED) {
-  let h = Math.imul(a | 0, 374761393) ^ Math.imul(b | 0, 668265263) ^ Math.imul(seed | 0, 1442695041);
+const UMBRELLA_COLORS = [
+  ['#ff6b6b', '#fff8f0'],
+  ['#2ec4b6', '#ffffff'],
+  ['#ffd166', '#fffef7'],
+  ['#3a86ff', '#f0f7ff'],
+  ['#f15bb5', '#fff0f7'],
+];
+
+const BEACH_TILE_Y = 37; // Tile 36 is oceanfront avenue (2304..2368), 37..39 is beach & surf
+
+function hash2d(x, y, salt = SEED) {
+  let h = (Math.imul(Math.floor(x) ^ salt, 374761393) + Math.imul(Math.floor(y), 668265263)) | 0;
   h = Math.imul(h ^ (h >>> 13), 1274126177);
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 }
@@ -63,7 +76,7 @@ function clamp(v, lo, hi) {
 }
 
 function roundRectPath(ctx, x, y, w, h, r) {
-  const rad = Math.min(r, w * 0.5, h * 0.5);
+  const rad = Math.min(r, w / 2, h / 2);
   ctx.beginPath();
   ctx.moveTo(x + rad, y);
   ctx.arcTo(x + w, y, x + w, y + h, rad);
@@ -73,923 +86,944 @@ function roundRectPath(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-function getWorldMeta(world) {
-  if (world && typeof world === 'object' && worldCache.has(world)) {
-    return worldCache.get(world);
-  }
-
-  const tileSize = world?.tileSize || TILE;
-  const rawW = world?.w ?? WORLD_PX;
-  const rawH = world?.h ?? WORLD_PX;
-  const worldPxW = rawW <= 200 ? rawW * tileSize : rawW;
-  const worldPxH = rawH <= 200 ? rawH * tileSize : rawH;
-  const tilesX = Math.max(4, Math.round(worldPxW / tileSize));
-  const tilesY = Math.max(4, Math.round(worldPxH / tileSize));
-  const beachStartTile = Math.max(tilesY - 3, Math.floor(tilesY * 0.92));
-  const beachStartY = beachStartTile * tileSize;
-
-  // Normalize road mask
-  const roadMask = new Uint8Array(tilesX * tilesY);
-  let roadCount = 0;
-
-  const markTile = (tx, ty) => {
-    if (tx >= 0 && ty >= 0 && tx < tilesX && ty < tilesY) {
-      if (!roadMask[ty * tilesX + tx]) {
-        roadMask[ty * tilesX + tx] = 1;
-        roadCount++;
-      }
-    }
-  };
-
-  const roads = world?.roads;
-  if (roads) {
-    if (Array.isArray(roads) && roads.length > 0) {
-      if (Array.isArray(roads[0])) {
-        for (let ty = 0; ty < Math.min(tilesY, roads.length); ty++) {
-          const row = roads[ty];
-          for (let tx = 0; tx < Math.min(tilesX, row.length); tx++) {
-            if (row[tx]) markTile(tx, ty);
-          }
-        }
-      } else if (typeof roads[0] === 'string') {
-        for (const key of roads) {
-          const parts = key.split(',').map(Number);
-          if (parts.length >= 2) markTile(parts[0], parts[1]);
-        }
-      } else if (typeof roads[0] === 'object') {
-        let maxCoord = 0;
-        for (const r of roads) {
-          maxCoord = Math.max(maxCoord, r.x || 0, r.y || 0, r.tx || 0, r.ty || 0, r.w || 0, r.h || 0);
-        }
-        const inPixels = maxCoord > Math.max(tilesX, tilesY) + 2;
-        for (const r of roads) {
-          if (r.w !== undefined && r.h !== undefined) {
-            const x0 = inPixels ? Math.floor(r.x / tileSize) : Math.floor(r.x);
-            const y0 = inPixels ? Math.floor(r.y / tileSize) : Math.floor(r.y);
-            const x1 = inPixels ? Math.ceil((r.x + r.w) / tileSize) : Math.ceil(r.x + r.w);
-            const y1 = inPixels ? Math.ceil((r.y + r.h) / tileSize) : Math.ceil(r.y + r.h);
-            for (let ty = y0; ty < y1; ty++) {
-              for (let tx = x0; tx < x1; tx++) markTile(tx, ty);
-            }
-          } else {
-            const tx = r.tx ?? (inPixels ? Math.floor((r.x || 0) / tileSize) : Math.floor(r.x || 0));
-            const ty = r.ty ?? (inPixels ? Math.floor((r.y || 0) / tileSize) : Math.floor(r.y || 0));
-            markTile(tx, ty);
-          }
-        }
-      }
-    } else if (roads instanceof Set) {
-      for (const key of roads) {
-        if (typeof key === 'string') {
-          const [tx, ty] = key.split(',').map(Number);
-          markTile(tx, ty);
-        }
-      }
-    } else if (typeof roads === 'object') {
-      const rows = roads.rows || roads.horizontal || roads.h || [];
-      const cols = roads.cols || roads.vertical || roads.v || [];
-      for (const row of rows) {
-        const ty = row > tilesY ? Math.floor(row / tileSize) : row;
-        for (let tx = 0; tx < tilesX; tx++) markTile(tx, ty);
-      }
-      for (const col of cols) {
-        const tx = col > tilesX ? Math.floor(col / tileSize) : col;
-        for (let ty = 0; ty < tilesY; ty++) markTile(tx, ty);
-      }
-    }
-  }
-
-  if (roadCount === 0) {
-    for (let ty = 0; ty < beachStartTile; ty++) {
-      for (let tx = 0; tx < tilesX; tx++) {
-        if (tx % ROAD_EVERY === 0 || ty % ROAD_EVERY === 0) {
-          markTile(tx, ty);
-        }
-      }
-    }
-  }
-
-  // Normalize buildings
-  const rawBuildings = Array.isArray(world?.buildings) ? world.buildings : [];
-  let maxB = 0;
-  for (const b of rawBuildings) {
-    maxB = Math.max(maxB, b.x || 0, b.y || 0, b.w || 0, b.h || 0);
-  }
-  const bInTiles = rawBuildings.length > 0 && maxB <= Math.max(tilesX, tilesY) + 1;
-
-  const buildings = rawBuildings.map((b, idx) => {
-    const scale = bInTiles ? tileSize : 1;
-    const x = (b.x || 0) * scale;
-    const y = (b.y || 0) * scale;
-    const w = Math.max(24, (b.w || tileSize) * scale);
-    const h = Math.max(24, (b.h || tileSize) * scale);
-    const seedVal = hash2(Math.round(x), Math.round(y), SEED + idx * 17);
-    const pal = BUILDING_PALETTE[Math.floor(seedVal * BUILDING_PALETTE.length)];
-    const stories = b.stories || b.floors || (1 + Math.floor(hash2(idx, 31, SEED) * 4));
-    const hasPool = w >= 92 && h >= 92 && hash2(idx, 97, SEED) > 0.72;
-    const hasHelipad = w >= 120 && h >= 120 && stories >= 4 && hash2(idx, 149, SEED) > 0.78;
-    const hasSkylight = !hasPool && !hasHelipad && w >= 64 && h >= 64 && hash2(idx, 211, SEED) > 0.55;
-    return {
-      x,
-      y,
-      w,
-      h,
-      base: b.color || pal.base,
-      roof: b.roofColor || pal.roof,
-      trim: pal.trim,
-      awning: b.awningColor || pal.awning,
-      stories,
-      hasPool,
-      hasHelipad,
-      hasSkylight,
-      seed: seedVal,
-    };
-  });
-
-  // Deterministic palm trees on beach, promenade, and open sidewalk corners
-  const palms = [];
-  const overlapsBuilding = (px, py, pad) => {
-    for (let i = 0; i < buildings.length; i++) {
-      const b = buildings[i];
-      if (px >= b.x - pad && px <= b.x + b.w + pad && py >= b.y - pad && py <= b.y + b.h + pad) {
-        return true;
-      }
-    }
-    return false;
-  };
-
-  // Beachfront promenade & sand palms
-  for (let tx = 0; tx < tilesX; tx++) {
-    const px = tx * tileSize + tileSize * (0.35 + hash2(tx, 701, SEED) * 0.35);
-    if (tx % 2 === 0) {
-      const pyProm = beachStartY + 18;
-      if (!overlapsBuilding(px, pyProm, 12)) {
-        palms.push({
-          x: px,
-          y: pyProm,
-          r: 20 + hash2(tx, 709, SEED) * 7,
-          phase: hash2(tx, 719, SEED) * Math.PI * 2,
-          fronds: 7,
-        });
-      }
-    }
-    if (hash2(tx, 733, SEED) > 0.48) {
-      const pySand = beachStartY + tileSize * (0.75 + hash2(tx, 743, SEED) * 0.45);
-      if (!overlapsBuilding(px + 12, pySand, 14)) {
-        palms.push({
-          x: px + 12,
-          y: pySand,
-          r: 18 + hash2(tx, 751, SEED) * 8,
-          phase: hash2(tx, 757, SEED) * Math.PI * 2,
-          fronds: 6,
-        });
-      }
-    }
-  }
-
-  // City sidewalk & courtyard palms
-  for (let ty = 1; ty < beachStartTile; ty++) {
-    for (let tx = 1; tx < tilesX - 1; tx++) {
-      if (roadMask[ty * tilesX + tx]) continue;
-      const nearRoad =
-        roadMask[ty * tilesX + (tx - 1)] ||
-        roadMask[ty * tilesX + (tx + 1)] ||
-        roadMask[(ty - 1) * tilesX + tx] ||
-        roadMask[(ty + 1) * tilesX + tx];
-      if (!nearRoad) continue;
-      if (hash2(tx, ty, SEED + 409) < 0.72) continue;
-      const px = tx * tileSize + 14 + hash2(tx, ty, SEED + 419) * (tileSize - 28);
-      const py = ty * tileSize + 14 + hash2(tx, ty, SEED + 431) * (tileSize - 28);
-      if (!overlapsBuilding(px, py, 14)) {
-        palms.push({
-          x: px,
-          y: py,
-          r: 16 + hash2(tx, ty, SEED + 439) * 6,
-          phase: hash2(tx, ty, SEED + 443) * Math.PI * 2,
-          fronds: 6,
-        });
-      }
-    }
-  }
-
-  // Beach props (umbrellas, towels)
-  const beachProps = [];
-  for (let tx = 1; tx < tilesX - 1; tx++) {
-    if (hash2(tx, 881, SEED) > 0.42) {
-      const ux = tx * tileSize + 18 + hash2(tx, 883, SEED) * 28;
-      const uy = beachStartY + tileSize * (0.9 + hash2(tx, 887, SEED) * 0.45);
-      const colors = ['#ff595e', '#1982c4', '#ffca3a', '#2ec4b6', '#ff924c', '#c77dff'];
-      beachProps.push({
-        x: ux,
-        y: uy,
-        r: 13 + hash2(tx, 907, SEED) * 4,
-        color: colors[tx % colors.length],
-        angle: hash2(tx, 911, SEED) * Math.PI,
-      });
-    }
-  }
-
-  const meta = {
-    tileSize,
-    worldPxW,
-    worldPxH,
-    tilesX,
-    tilesY,
-    beachStartTile,
-    beachStartY,
-    roadMask,
-    buildings,
-    palms,
-    beachProps,
-  };
-
-  if (world && typeof world === 'object') {
-    worldCache.set(world, meta);
-  }
-  return meta;
+function getWorldMetrics(world) {
+  const ts = world?.tileSize || TILE;
+  let wPx = WORLD_PX;
+  let hPx = WORLD_PX;
+  if (world?.w) wPx = world.w <= 128 ? world.w * ts : world.w;
+  if (world?.h) hPx = world.h <= 128 ? world.h * ts : world.h;
+  const tilesX = Math.max(8, Math.round(wPx / ts));
+  const tilesY = Math.max(8, Math.round(hPx / ts));
+  return { ts, wPx, hPx, tilesX, tilesY };
 }
 
-function isRoadTile(meta, tx, ty) {
-  if (tx < 0 || ty < 0 || tx >= meta.tilesX || ty >= meta.tilesY) return false;
-  return meta.roadMask[ty * meta.tilesX + tx] === 1;
+function getRoadLines(metrics, world) {
+  const vCols = new Set();
+  const hRows = new Set();
+
+  for (let c = 0; c < metrics.tilesX; c += ROAD_EVERY) {
+    vCols.add(c);
+  }
+  for (let r = 0; r < metrics.tilesY; r += ROAD_EVERY) {
+    if (r <= BEACH_TILE_Y - 1) hRows.add(r);
+  }
+
+  // Also absorb explicit numeric road lists if supplied
+  if (Array.isArray(world?.roads)) {
+    for (const item of world.roads) {
+      if (typeof item === 'number') {
+        vCols.add(item);
+        hRows.add(item);
+      } else if (item && typeof item === 'object' && 'x' in item && 'y' in item && 'w' in item && 'h' in item) {
+        if (item.w > item.h * 2) hRows.add(Math.round(item.y / metrics.ts));
+        if (item.h > item.w * 2) vCols.add(Math.round(item.x / metrics.ts));
+      }
+    }
+  }
+
+  return {
+    vCols: Array.from(vCols).sort((a, b) => a - b),
+    hRows: Array.from(hRows).sort((a, b) => a - b),
+  };
 }
 
-function drawBeachAndOcean(ctx, meta, camX, camY, viewW, viewH, time) {
-  const beachY = meta.beachStartY;
-  const maxVisibleY = camY + viewH;
-  if (maxVisibleY < beachY - 8) return;
-
-  const left = Math.max(0, camX - 64);
-  const right = Math.min(meta.worldPxW, camX + viewW + 64);
-  const width = Math.max(0, right - left);
-  if (width <= 0) return;
-
-  // Boardwalk promenade strip
-  const promenadeH = 26;
-  ctx.fillStyle = '#e5dcc8';
-  ctx.fillRect(left, beachY, width, promenadeH);
-  ctx.fillStyle = '#cbbda3';
-  ctx.fillRect(left, beachY + promenadeH - 3, width, 3);
-
-  ctx.strokeStyle = 'rgba(130, 114, 88, 0.28)';
-  ctx.lineWidth = 1;
-  const startBoard = Math.floor(left / 16) * 16;
-  ctx.beginPath();
-  for (let x = startBoard; x <= right; x += 16) {
-    ctx.moveTo(x, beachY + 2);
-    ctx.lineTo(x, beachY + promenadeH - 3);
+let cachedFallbackBuildings = null;
+function getBuildings(world, metrics) {
+  if (Array.isArray(world?.buildings) && world.buildings.length > 0) {
+    return world.buildings;
   }
-  ctx.stroke();
+  if (cachedFallbackBuildings) return cachedFallbackBuildings;
 
-  // Golden beach sand
-  const sandY = beachY + promenadeH;
-  const surfY = meta.worldPxH - meta.tileSize * 1.15;
-  const sandGrad = ctx.createLinearGradient(0, sandY, 0, surfY + 26);
-  sandGrad.addColorStop(0, '#f7e1a0');
-  sandGrad.addColorStop(0.75, '#eed18a');
-  sandGrad.addColorStop(1, '#d8b76e');
-  ctx.fillStyle = sandGrad;
-  ctx.fillRect(left, sandY, width, Math.max(40, surfY - sandY + 34));
-
-  // Ocean gradient
-  const oceanTop = surfY;
-  const oceanBottom = Math.max(meta.worldPxH + 160, camY + viewH + 40);
-  const oceanGrad = ctx.createLinearGradient(0, oceanTop, 0, oceanTop + 160);
-  oceanGrad.addColorStop(0, '#5ce1e6');
-  oceanGrad.addColorStop(0.28, '#28b7c9');
-  oceanGrad.addColorStop(0.68, '#1782ab');
-  oceanGrad.addColorStop(1, '#0e5c82');
-  ctx.fillStyle = oceanGrad;
-
-  ctx.beginPath();
-  ctx.moveTo(left, oceanBottom);
-  const step = 20;
-  for (let x = left; x <= right + step; x += step) {
-    const wave = Math.sin(x * 0.02 + time * 1.9) * 5 + Math.cos(x * 0.045 - time * 1.3) * 2.5;
-    ctx.lineTo(x, oceanTop + wave);
+  const list = [];
+  const ts = metrics.ts;
+  for (let br = 0; br < BEACH_TILE_Y - 1; br += ROAD_EVERY) {
+    for (let bc = 0; bc < metrics.tilesX - 1; bc += ROAD_EVERY) {
+      const bx0 = (bc + 1) * ts + 10;
+      const by0 = (br + 1) * ts + 10;
+      const bw = (ROAD_EVERY - 1) * ts - 20;
+      const bh = (ROAD_EVERY - 1) * ts - 20;
+      const r = hash2d(bc, br, SEED + 77);
+      // Leave a couple of lush coastal parks
+      if (r < 0.14) continue;
+      if (r < 0.56) {
+        // Two split buildings in block
+        const splitH = hash2d(bc, br, SEED + 19) > 0.5;
+        if (splitH) {
+          const h1 = Math.floor(bh * (0.44 + hash2d(bc, br, 31) * 0.14));
+          list.push({ x: bx0, y: by0, w: bw, h: h1 - 6 });
+          list.push({ x: bx0, y: by0 + h1 + 6, w: bw, h: bh - h1 - 6 });
+        } else {
+          const w1 = Math.floor(bw * (0.44 + hash2d(bc, br, 37) * 0.14));
+          list.push({ x: bx0, y: by0, w: w1 - 6, h: bh });
+          list.push({ x: bx0 + w1 + 6, y: by0, w: bw - w1 - 6, h: bh });
+        }
+      } else {
+        // Single landmark building with plaza inset
+        list.push({ x: bx0 + 4, y: by0 + 4, w: bw - 8, h: bh - 8 });
+      }
+    }
   }
-  ctx.lineTo(right + step, oceanBottom);
-  ctx.closePath();
-  ctx.fill();
+  cachedFallbackBuildings = list;
+  return list;
+}
 
-  // White surf foam ribbon
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.78)';
-  ctx.lineWidth = 4;
-  ctx.beginPath();
-  for (let x = left; x <= right + step; x += step) {
-    const wave = Math.sin(x * 0.02 + time * 1.9) * 5 + Math.cos(x * 0.045 - time * 1.3) * 2.5;
-    if (x === left) ctx.moveTo(x, oceanTop + wave);
-    else ctx.lineTo(x, oceanTop + wave);
+function pointHitsBuildings(x, y, pad, buildings) {
+  for (let i = 0; i < buildings.length; i++) {
+    const b = buildings[i];
+    if (
+      x >= b.x - pad &&
+      x <= b.x + b.w + pad &&
+      y >= b.y - pad &&
+      y <= b.y + b.h + pad
+    ) {
+      return true;
+    }
   }
-  ctx.stroke();
+  return false;
+}
 
-  // Secondary offshore wave ripples
-  ctx.strokeStyle = 'rgba(220, 252, 255, 0.34)';
-  ctx.lineWidth = 2;
-  for (let band = 0; band < 3; band++) {
-    const by = oceanTop + 26 + band * 26;
+function getCamera(state, camera, metrics, viewW, viewH) {
+  if (camera && Number.isFinite(camera.x) && Number.isFinite(camera.y)) {
+    return camera;
+  }
+  const focus = state?.car && !state?.player?.onFoot ? state.car : state?.player;
+  const fx = focus?.x ?? metrics.wPx * 0.5;
+  const fy = focus?.y ?? metrics.hPx * 0.5;
+  return {
+    x: clamp(fx - viewW * 0.5, -120, metrics.wPx - viewW + 120),
+    y: clamp(fy - viewH * 0.5, -120, metrics.hPx - viewH + 160),
+  };
+}
+
+function getDistrictName(x, y) {
+  if (y >= 2260) return 'MARLIN BEACH';
+  if (y >= 1760) return x < 1280 ? 'PALM PROMENADE' : 'OCEAN MARINA';
+  if (x < 960) return y < 960 ? 'CORAL HEIGHTS' : 'SUNSET STRIP';
+  if (x > 1680) return y < 960 ? 'BAYVIEW ESTATES' : 'HARBOR DISTRICT';
+  return 'DOWNTOWN MARLIN';
+}
+
+function drawOceanAndBeach(ctx, metrics, cam, viewW, viewH, time, buildings) {
+  const ts = metrics.ts;
+  const beachTop = Math.min(metrics.hPx - ts * 3, BEACH_TILE_Y * ts);
+  const boardwalkH = 26;
+  const sandTop = beachTop + boardwalkH;
+  const shoreY = metrics.hPx - 70;
+
+  // Deep ocean backdrop everywhere outside city bounds
+  ctx.fillStyle = '#0f86a1';
+  ctx.fillRect(cam.x - 40, cam.y - 40, viewW + 80, viewH + 80);
+
+  // Subtle turquoise water shimmer bands outside city
+  ctx.fillStyle = 'rgba(72, 214, 224, 0.18)';
+  const waveShift = Math.sin(time * 1.1) * 18;
+  for (let wy = Math.floor((cam.y - 60) / 56) * 56; wy < cam.y + viewH + 60; wy += 56) {
+    if (wy > beachTop || wy < 0) {
+      ctx.fillRect(cam.x - 40, wy + waveShift * 0.25, viewW + 80, 12);
+    }
+  }
+
+  // City ground base (warm coastal sand-concrete)
+  ctx.fillStyle = '#dcd4c4';
+  ctx.fillRect(0, 0, metrics.wPx, beachTop);
+
+  // Coastal park turf patches in select interior blocks
+  for (let br = 0; br < BEACH_TILE_Y - 1; br += ROAD_EVERY) {
+    for (let bc = 0; bc < metrics.tilesX - 1; bc += ROAD_EVERY) {
+      const x0 = (bc + 1) * ts;
+      const y0 = (br + 1) * ts;
+      const bw = (ROAD_EVERY - 1) * ts;
+      const bh = (ROAD_EVERY - 1) * ts;
+      if (x0 + bw < cam.x - 64 || x0 > cam.x + viewW + 64 || y0 + bh < cam.y - 64 || y0 > cam.y + viewH + 64) {
+        continue;
+      }
+      const h = hash2d(bc, br, SEED + 77);
+      if (h < 0.24) {
+        // Lush park square
+        ctx.fillStyle = '#6cc070';
+        ctx.fillRect(x0 + 8, y0 + 8, bw - 16, bh - 16);
+        ctx.fillStyle = '#5ab060';
+        ctx.fillRect(x0 + 18, y0 + 18, bw - 36, bh - 36);
+        // Cross paths
+        ctx.fillStyle = '#e5dccb';
+        ctx.fillRect(x0 + bw * 0.5 - 8, y0 + 8, 16, bh - 16);
+        ctx.fillRect(x0 + 8, y0 + bh * 0.5 - 8, bw - 16, 16);
+        // Central fountain
+        const fx = x0 + bw * 0.5;
+        const fy = y0 + bh * 0.5;
+        ctx.fillStyle = '#f2ede1';
+        ctx.beginPath();
+        ctx.arc(fx, fy, 18, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#38c6d9';
+        ctx.beginPath();
+        ctx.arc(fx, fy, 13, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = 'rgba(255,255,255,0.65)';
+        ctx.beginPath();
+        ctx.arc(fx, fy, 4 + Math.sin(time * 4 + bc) * 1.2, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        // Warm courtyard paving grid
+        ctx.fillStyle = '#e6dfd0';
+        ctx.fillRect(x0 + 2, y0 + 2, bw - 4, bh - 4);
+      }
+    }
+  }
+
+  // Only render south beach strip if visible
+  if (cam.y + viewH >= beachTop - 40) {
+    // Timber boardwalk promenade
+    ctx.fillStyle = '#c89b68';
+    ctx.fillRect(0, beachTop, metrics.wPx, boardwalkH);
+    ctx.fillStyle = '#b48654';
+    ctx.fillRect(0, beachTop + boardwalkH - 3, metrics.wPx, 3);
+    ctx.strokeStyle = 'rgba(92, 60, 28, 0.22)';
+    ctx.lineWidth = 1;
+    const xStart = Math.max(0, Math.floor(cam.x / 12) * 12);
+    const xEnd = Math.min(metrics.wPx, cam.x + viewW + 12);
     ctx.beginPath();
-    for (let x = Math.floor(left / 90) * 90; x <= right; x += 90) {
-      const shift = Math.sin(time * 1.5 + band * 1.7 + x * 0.01) * 8;
-      ctx.moveTo(x + shift, by);
-      ctx.quadraticCurveTo(x + 22 + shift, by - 4, x + 44 + shift, by);
+    for (let px = xStart; px <= xEnd; px += 12) {
+      ctx.moveTo(px, beachTop);
+      ctx.lineTo(px, sandTop);
     }
+    ctx.stroke();
+
+    // Warm golden sand beach
+    const sandGrad = ctx.createLinearGradient(0, sandTop, 0, shoreY + 14);
+    sandGrad.addColorStop(0, '#f5dca8');
+    sandGrad.addColorStop(0.72, '#edd092');
+    sandGrad.addColorStop(1, '#dfc080');
+    ctx.fillStyle = sandGrad;
+    ctx.fillRect(0, sandTop, metrics.wPx, shoreY - sandTop + 16);
+
+    // Gentle shallow turquoise ocean gradient below shoreline
+    const seaGrad = ctx.createLinearGradient(0, shoreY - 4, 0, metrics.hPx + 180);
+    seaGrad.addColorStop(0, '#5ce0e0');
+    seaGrad.addColorStop(0.28, '#20b3c4');
+    seaGrad.addColorStop(0.75, '#0e85a1');
+    seaGrad.addColorStop(1, '#085d78');
+    ctx.fillStyle = seaGrad;
+    ctx.fillRect(-100, shoreY, metrics.wPx + 200, metrics.hPx - shoreY + 260);
+
+    // Animated wavy surf foam along shoreline
+    const sway = Math.sin(time * 1.8) * 4;
+    ctx.beginPath();
+    ctx.moveTo(xStart - 20, shoreY + 30);
+    for (let sx = xStart - 20; sx <= xEnd + 40; sx += 36) {
+      const wy = shoreY + Math.sin(sx * 0.014 + time * 1.5) * 4.5 + sway * 0.4;
+      ctx.lineTo(sx, wy);
+    }
+    ctx.lineTo(xEnd + 40, shoreY + 30);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.58)';
+    ctx.fill();
+
+    // Secondary crest wave further out
+    ctx.strokeStyle = 'rgba(235, 255, 255, 0.45)';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    for (let sx = xStart; sx <= xEnd; sx += 44) {
+      const wy = shoreY + 26 + Math.sin(sx * 0.018 - time * 1.2) * 3.5;
+      ctx.moveTo(sx, wy);
+      ctx.lineTo(sx + 22, wy + 1);
+    }
+    ctx.stroke();
+
+    // Wooden marina pier at x ≈ 1560
+    const pierX = 1528;
+    if (pierX + 80 >= cam.x && pierX - 40 <= cam.x + viewW) {
+      ctx.fillStyle = 'rgba(8, 45, 62, 0.28)';
+      ctx.fillRect(pierX + 6, sandTop + 6, 46, 174);
+      ctx.fillStyle = '#b98856';
+      ctx.fillRect(pierX, sandTop, 46, 174);
+      ctx.strokeStyle = 'rgba(72, 46, 22, 0.35)';
+      ctx.lineWidth = 1;
+      for (let py = sandTop + 6; py < sandTop + 174; py += 8) {
+        ctx.beginPath();
+        ctx.moveTo(pierX, py);
+        ctx.lineTo(pierX + 46, py);
+        ctx.stroke();
+      }
+      // Small white speedboat moored beside pier
+      const boatY = shoreY + 42 + Math.sin(time * 2.1) * 2;
+      ctx.save();
+      ctx.translate(pierX + 66, boatY);
+      ctx.fillStyle = 'rgba(6, 40, 56, 0.3)';
+      ctx.beginPath();
+      ctx.ellipse(3, 4, 24, 10, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.moveTo(24, 0);
+      ctx.quadraticCurveTo(10, -10, -22, -8);
+      ctx.lineTo(-22, 8);
+      ctx.quadraticCurveTo(10, 10, 24, 0);
+      ctx.fill();
+      ctx.fillStyle = '#ff6b6b';
+      ctx.fillRect(-14, -5, 18, 10);
+      ctx.fillStyle = '#1d3557';
+      ctx.fillRect(2, -4, 6, 8);
+      ctx.restore();
+    }
+
+    // Colorful beach umbrellas & towels on the sand
+    for (let ux = 84; ux < metrics.wPx - 64; ux += 112) {
+      if (ux < cam.x - 40 || ux > cam.x + viewW + 40) continue;
+      if (Math.abs(ux - pierX - 23) < 62) continue;
+      const uy = sandTop + 34 + (hash2d(ux, 11) * 28);
+      if (pointHitsBuildings(ux, uy, 22, buildings)) continue;
+
+      const pair = UMBRELLA_COLORS[Math.floor(hash2d(ux, 29) * UMBRELLA_COLORS.length)];
+      // Beach towel beside umbrella
+      ctx.save();
+      ctx.translate(ux + 16, uy + 10);
+      ctx.rotate((hash2d(ux, 43) - 0.5) * 0.25);
+      ctx.fillStyle = pair[0];
+      ctx.fillRect(-8, -13, 16, 26);
+      ctx.fillStyle = 'rgba(255,255,255,0.65)';
+      ctx.fillRect(-8, -5, 16, 4);
+      ctx.fillRect(-8, 4, 16, 4);
+      ctx.restore();
+
+      // Umbrella shadow
+      ctx.fillStyle = 'rgba(92, 68, 36, 0.22)';
+      ctx.beginPath();
+      ctx.arc(ux + 6, uy + 7, 15, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Umbrella canopy (8 alternating wedges)
+      const slices = 8;
+      for (let s = 0; s < slices; s++) {
+        const a0 = (s / slices) * Math.PI * 2;
+        const a1 = ((s + 1) / slices) * Math.PI * 2;
+        ctx.fillStyle = s % 2 === 0 ? pair[0] : pair[1];
+        ctx.beginPath();
+        ctx.moveTo(ux, uy);
+        ctx.arc(ux, uy, 15, a0, a1);
+        ctx.closePath();
+        ctx.fill();
+      }
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(ux, uy, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+}
+
+function drawRoads(ctx, metrics, roadLines, cam, viewW, viewH) {
+  const ts = metrics.ts;
+  const maxRoadY = Math.min(metrics.hPx, (BEACH_TILE_Y) * ts);
+  const { vCols, hRows } = roadLines;
+
+  // Sidewalk collars along roads
+  const swPad = 10;
+  ctx.fillStyle = '#ebe4d6';
+  for (const c of vCols) {
+    const rx = c * ts;
+    if (rx + ts + swPad < cam.x || rx - swPad > cam.x + viewW) continue;
+    ctx.fillRect(rx - swPad, 0, ts + swPad * 2, maxRoadY);
+  }
+  for (const r of hRows) {
+    const ry = r * ts;
+    if (ry + ts + swPad < cam.y || ry - swPad > cam.y + viewH) continue;
+    ctx.fillRect(0, ry - swPad, metrics.wPx, ts + swPad * 2);
+  }
+
+  // Curb outlines
+  ctx.fillStyle = '#c5bdb0';
+  for (const c of vCols) {
+    const rx = c * ts;
+    if (rx + ts + 3 < cam.x || rx - 3 > cam.x + viewW) continue;
+    ctx.fillRect(rx - 2, 0, ts + 4, maxRoadY);
+  }
+  for (const r of hRows) {
+    const ry = r * ts;
+    if (ry + ts + 3 < cam.y || ry - 3 > cam.y + viewH) continue;
+    ctx.fillRect(0, ry - 2, metrics.wPx, ts + 4);
+  }
+
+  // Dark coastal asphalt surface
+  ctx.fillStyle = '#333b47';
+  for (const c of vCols) {
+    const rx = c * ts;
+    if (rx + ts < cam.x || rx > cam.x + viewW) continue;
+    ctx.fillRect(rx, 0, ts, maxRoadY);
+  }
+  for (const r of hRows) {
+    const ry = r * ts;
+    if (ry + ts < cam.y || ry > cam.y + viewH) continue;
+    ctx.fillRect(0, ry, metrics.wPx, ts);
+  }
+
+  // Subtle shoulder edge markings
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.16)';
+  ctx.lineWidth = 1.5;
+  for (const c of vCols) {
+    const rx = c * ts;
+    if (rx + ts < cam.x || rx > cam.x + viewW) continue;
+    ctx.beginPath();
+    ctx.moveTo(rx + 4, Math.max(0, cam.y));
+    ctx.lineTo(rx + 4, Math.min(maxRoadY, cam.y + viewH));
+    ctx.moveTo(rx + ts - 4, Math.max(0, cam.y));
+    ctx.lineTo(rx + ts - 4, Math.min(maxRoadY, cam.y + viewH));
+    ctx.stroke();
+  }
+  for (const r of hRows) {
+    const ry = r * ts;
+    if (ry + ts < cam.y || ry > cam.y + viewH) continue;
+    ctx.beginPath();
+    ctx.moveTo(Math.max(0, cam.x), ry + 4);
+    ctx.lineTo(Math.min(metrics.wPx, cam.x + viewW), ry + 4);
+    ctx.moveTo(Math.max(0, cam.x), ry + ts - 4);
+    ctx.lineTo(Math.min(metrics.wPx, cam.x + viewW), ry + ts - 4);
     ctx.stroke();
   }
 
-  // Wooden marina pier near center-east beach
-  const pierX = Math.floor(meta.tilesX * 0.56) * meta.tileSize;
-  if (pierX + 44 >= camX && pierX - 20 <= camX + viewW) {
-    const pierW = 40;
-    const pierH = meta.tileSize * 2.05;
-    ctx.fillStyle = 'rgba(10, 32, 48, 0.25)';
-    ctx.fillRect(pierX + 6, sandY + 12, pierW, pierH);
-    ctx.fillStyle = '#b98b5b';
-    ctx.fillRect(pierX, sandY + 4, pierW, pierH);
-    ctx.strokeStyle = '#8b6239';
-    ctx.lineWidth = 1.5;
-    for (let py = sandY + 10; py < sandY + pierH; py += 9) {
+  // Crisp amber-yellow dashed center lines (broken cleanly at intersections)
+  ctx.save();
+  ctx.strokeStyle = '#f6c945';
+  ctx.lineWidth = 2.5;
+  ctx.setLineDash([14, 12]);
+
+  for (const c of vCols) {
+    const cx = c * ts + ts * 0.5;
+    if (cx < cam.x - 10 || cx > cam.x + viewW + 10) continue;
+    for (let i = 0; i < hRows.length; i++) {
+      const y1 = hRows[i] * ts + ts + 10;
+      const y2 = i + 1 < hRows.length ? hRows[i + 1] * ts - 10 : maxRoadY - 6;
+      if (y2 <= y1 || y2 < cam.y || y1 > cam.y + viewH) continue;
       ctx.beginPath();
-      ctx.moveTo(pierX, py);
-      ctx.lineTo(pierX + pierW, py);
+      ctx.moveTo(cx, y1);
+      ctx.lineTo(cx, y2);
       ctx.stroke();
     }
-    ctx.fillStyle = '#6f4b28';
-    for (let py = sandY + 16; py < sandY + pierH; py += 34) {
-      ctx.fillRect(pierX - 2, py, 5, 5);
-      ctx.fillRect(pierX + pierW - 3, py, 5, 5);
-    }
   }
 
-  // Beach umbrellas & towels
-  for (let i = 0; i < meta.beachProps.length; i++) {
-    const p = meta.beachProps[i];
-    if (p.x < camX - 30 || p.x > camX + viewW + 30 || p.y < camY - 30 || p.y > camY + viewH + 30) {
-      continue;
-    }
-    // Towel
-    ctx.save();
-    ctx.translate(p.x + 12, p.y + 8);
-    ctx.rotate(p.angle * 0.3);
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(-10, -5, 20, 10);
-    ctx.fillStyle = p.color;
-    ctx.fillRect(-10, -2, 20, 4);
-    ctx.restore();
-
-    // Umbrella shadow
-    ctx.fillStyle = 'rgba(85, 65, 30, 0.24)';
-    ctx.beginPath();
-    ctx.arc(p.x + 5, p.y + 6, p.r, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Umbrella canopy
-    ctx.fillStyle = p.color;
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Alternating white wedges
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
-    for (let w = 0; w < 3; w++) {
-      const a0 = p.angle + (w * Math.PI * 2) / 3;
+  for (const r of hRows) {
+    const cy = r * ts + ts * 0.5;
+    if (cy < cam.y - 10 || cy > cam.y + viewH + 10) continue;
+    for (let i = 0; i < vCols.length; i++) {
+      const x1 = vCols[i] * ts + ts + 10;
+      const x2 = i + 1 < vCols.length ? vCols[i + 1] * ts - 10 : metrics.wPx - 6;
+      if (x2 <= x1 || x2 < cam.x || x1 > cam.x + viewW) continue;
       ctx.beginPath();
-      ctx.moveTo(p.x, p.y);
-      ctx.arc(p.x, p.y, p.r, a0, a0 + Math.PI / 3);
-      ctx.closePath();
-      ctx.fill();
+      ctx.moveTo(x1, cy);
+      ctx.lineTo(x2, cy);
+      ctx.stroke();
     }
-
-    ctx.fillStyle = '#fff5d6';
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, 2.5, 0, Math.PI * 2);
-    ctx.fill();
   }
-}
+  ctx.restore();
 
-function drawRoadsAndSidewalks(ctx, meta, camX, camY, viewW, viewH) {
-  const ts = meta.tileSize;
-  const startTX = Math.max(0, Math.floor(camX / ts) - 1);
-  const endTX = Math.min(meta.tilesX - 1, Math.ceil((camX + viewW) / ts) + 1);
-  const startTY = Math.max(0, Math.floor(camY / ts) - 1);
-  const endTY = Math.min(meta.tilesY - 1, Math.ceil((camY + viewH) / ts) + 1);
+  // Crisp intersection crosswalks
+  ctx.fillStyle = 'rgba(244, 246, 248, 0.72)';
+  for (const c of vCols) {
+    const rx = c * ts;
+    if (rx + ts + 16 < cam.x || rx - 16 > cam.x + viewW) continue;
+    for (const r of hRows) {
+      const ry = r * ts;
+      if (ry + ts + 16 < cam.y || ry - 16 > cam.y + viewH) continue;
+      // Intersection asphalt square (cleanly masks shoulder lines)
+      ctx.fillStyle = '#333b47';
+      ctx.fillRect(rx + 2, ry + 2, ts - 4, ts - 4);
 
-  // Sidewalks and urban turf blocks
-  for (let ty = startTY; ty <= endTY; ty++) {
-    if (ty >= meta.beachStartTile) continue;
-    const py = ty * ts;
-    for (let tx = startTX; tx <= endTX; tx++) {
-      if (isRoadTile(meta, tx, ty)) continue;
-      const px = tx * ts;
-      const blockX = Math.floor(tx / ROAD_EVERY);
-      const blockY = Math.floor(ty / ROAD_EVERY);
-      const isParkBlock = (blockX + blockY) % 5 === 2 && hash2(blockX, blockY, SEED + 99) > 0.55;
-
-      // Sidewalk base
-      ctx.fillStyle = '#dfd8c7';
-      ctx.fillRect(px, py, ts, ts);
-
-      // Subtle concrete tile seam
-      ctx.strokeStyle = 'rgba(130, 122, 106, 0.18)';
-      ctx.lineWidth = 1;
-      ctx.strokeRect(px + 0.5, py + 0.5, ts - 1, ts - 1);
-
-      // Inner courtyard lawn
-      if (isParkBlock) {
-        ctx.fillStyle = '#7ec472';
-        ctx.fillRect(px + 6, py + 6, ts - 12, ts - 12);
-      } else {
-        ctx.fillStyle = '#d3ccb8';
-        ctx.fillRect(px + 5, py + 5, ts - 10, ts - 10);
+      ctx.fillStyle = 'rgba(245, 247, 250, 0.72)';
+      // Horizontal crosswalks (north & south of intersection)
+      for (let s = 8; s <= ts - 12; s += 10) {
+        if (ry > 0) ctx.fillRect(rx + s, ry - 7, 5, 6);
+        if (ry + ts < maxRoadY) ctx.fillRect(rx + s, ry + ts + 1, 5, 6);
       }
-    }
-  }
-
-  // Road asphalt & markings
-  for (let ty = startTY; ty <= endTY; ty++) {
-    const py = ty * ts;
-    for (let tx = startTX; tx <= endTX; tx++) {
-      if (!isRoadTile(meta, tx, ty)) continue;
-      const px = tx * ts;
-
-      const n = isRoadTile(meta, tx, ty - 1);
-      const s = isRoadTile(meta, tx, ty + 1);
-      const w = isRoadTile(meta, tx - 1, ty);
-      const e = isRoadTile(meta, tx + 1, ty);
-      const isIntersection = (n || s) && (e || w);
-
-      // Asphalt surface
-      ctx.fillStyle = isIntersection ? '#3c4452' : '#333b48';
-      ctx.fillRect(px, py, ts, ts);
-
-      // Road shoulder curbs where adjacent to non-road
-      ctx.fillStyle = '#c4bca9';
-      if (!n) ctx.fillRect(px, py, ts, 3);
-      if (!s) ctx.fillRect(px, py + ts - 3, ts, 3);
-      if (!w) ctx.fillRect(px, py, 3, ts);
-      if (!e) ctx.fillRect(px + ts - 3, py, 3, ts);
-
-      // Edge paint lines
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.22)';
-      if (!n) ctx.fillRect(px, py + 5, ts, 1.5);
-      if (!s) ctx.fillRect(px, py + ts - 6.5, ts, 1.5);
-      if (!w) ctx.fillRect(px + 5, py, 1.5, ts);
-      if (!e) ctx.fillRect(px + ts - 6.5, py, 1.5, ts);
-
-      if (isIntersection) {
-        // Crosswalk zebra stripes on incoming edges
-        ctx.fillStyle = 'rgba(244, 246, 248, 0.72)';
-        const stripeCount = 5;
-        const gap = (ts - 16) / stripeCount;
-        if (n) {
-          for (let i = 0; i < stripeCount; i++) {
-            ctx.fillRect(px + 10 + i * gap, py + 2, gap * 0.55, 8);
-          }
-        }
-        if (s) {
-          for (let i = 0; i < stripeCount; i++) {
-            ctx.fillRect(px + 10 + i * gap, py + ts - 10, gap * 0.55, 8);
-          }
-        }
-        if (w) {
-          for (let i = 0; i < stripeCount; i++) {
-            ctx.fillRect(px + 2, py + 10 + i * gap, 8, gap * 0.55);
-          }
-        }
-        if (e) {
-          for (let i = 0; i < stripeCount; i++) {
-            ctx.fillRect(px + ts - 10, py + 10 + i * gap, 8, gap * 0.55);
-          }
-        }
-      } else if (e || w) {
-        // Horizontal dashed yellow center line
-        ctx.fillStyle = '#f3c74d';
-        ctx.fillRect(px + 8, py + ts * 0.5 - 1.5, 18, 3);
-        ctx.fillRect(px + 38, py + ts * 0.5 - 1.5, 18, 3);
-      } else if (n || s) {
-        // Vertical dashed yellow center line
-        ctx.fillStyle = '#f3c74d';
-        ctx.fillRect(px + ts * 0.5 - 1.5, py + 8, 3, 18);
-        ctx.fillRect(px + ts * 0.5 - 1.5, py + 38, 3, 18);
+      // Vertical crosswalks (west & east of intersection)
+      for (let s = 8; s <= ts - 12; s += 10) {
+        if (rx > 0) ctx.fillRect(rx - 7, ry + s, 6, 5);
+        if (rx + ts < metrics.wPx) ctx.fillRect(rx + ts + 1, ry + s, 6, 5);
       }
     }
   }
 }
 
-function drawBuildings(ctx, meta, camX, camY, viewW, viewH) {
-  const pad = 48;
-  const visible = [];
-  for (let i = 0; i < meta.buildings.length; i++) {
-    const b = meta.buildings[i];
+function drawBuildings(ctx, buildings, cam, viewW, viewH) {
+  for (let i = 0; i < buildings.length; i++) {
+    const b = buildings[i];
     if (
-      b.x + b.w < camX - pad ||
-      b.x > camX + viewW + pad ||
-      b.y + b.h < camY - pad ||
-      b.y > camY + viewH + pad
+      b.x + b.w + 30 < cam.x ||
+      b.x - 20 > cam.x + viewW ||
+      b.y + b.h + 30 < cam.y ||
+      b.y - 20 > cam.y + viewH
     ) {
       continue;
     }
-    visible.push(b);
-  }
 
-  // Soft shadows first
-  ctx.fillStyle = 'rgba(14, 24, 40, 0.23)';
-  for (let i = 0; i < visible.length; i++) {
-    const b = visible[i];
-    const sx = 7 + b.stories * 2.2;
-    const sy = 9 + b.stories * 2.4;
-    roundRectPath(ctx, b.x + sx, b.y + sy, b.w, b.h, 5);
-    ctx.fill();
-  }
+    const h = hash2d(b.x, b.y, SEED + 101);
+    const pal = BUILDING_PALETTE[Math.floor(h * BUILDING_PALETTE.length)];
+    const roofColor = b.color || pal.roof;
+    const wallColor = b.wallColor || pal.wall;
+    const heightTier = 1 + Math.floor(hash2d(b.x + b.w, b.y + b.h, SEED + 17) * 3); // 1..3
+    const shadowDx = 7 + heightTier * 4;
+    const shadowDy = 8 + heightTier * 4.5;
+    const wallDepth = 4 + heightTier * 2.5;
 
-  // Building volumes & architectural roofs
-  for (let i = 0; i < visible.length; i++) {
-    const b = visible[i];
-    const inset = Math.min(9, Math.max(5, Math.min(b.w, b.h) * 0.1));
-
-    // Outer wall / facade
-    ctx.fillStyle = b.base;
-    roundRectPath(ctx, b.x, b.y, b.w, b.h, 4);
+    // Soft cast shadow
+    ctx.fillStyle = 'rgba(15, 25, 42, 0.24)';
+    roundRectPath(ctx, b.x + shadowDx, b.y + shadowDy, b.w, b.h, 4);
     ctx.fill();
 
-    // Subtle sunlit top-left edge & shaded bottom-right edge
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)';
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.moveTo(b.x + 2, b.y + b.h - 2);
-    ctx.lineTo(b.x + 2, b.y + 2);
-    ctx.lineTo(b.x + b.w - 2, b.y + 2);
-    ctx.stroke();
-
-    ctx.strokeStyle = 'rgba(25, 35, 52, 0.24)';
-    ctx.beginPath();
-    ctx.moveTo(b.x + b.w - 1, b.y + 2);
-    ctx.lineTo(b.x + b.w - 1, b.y + b.h - 1);
-    ctx.lineTo(b.x + 2, b.y + b.h - 1);
-    ctx.stroke();
-
-    // Parapet trim
-    ctx.fillStyle = b.trim;
-    roundRectPath(ctx, b.x + 3, b.y + 3, b.w - 6, b.h - 6, 3);
+    // Extruded south/east facade wall for crisp top-down 2.5D depth
+    ctx.fillStyle = wallColor;
+    roundRectPath(ctx, b.x, b.y, b.w, b.h, 3);
     ctx.fill();
 
-    // Roof deck
-    ctx.fillStyle = b.roof;
-    roundRectPath(ctx, b.x + inset, b.y + inset, b.w - inset * 2, b.h - inset * 2, 2);
+    // Sunlit top roof footprint (slightly shifted up-left inside wall bounds)
+    const rx = b.x;
+    const ry = b.y;
+    const rw = Math.max(8, b.w - wallDepth);
+    const rh = Math.max(8, b.h - wallDepth);
+    ctx.fillStyle = roofColor;
+    roundRectPath(ctx, rx, ry, rw, rh, 3);
     ctx.fill();
 
-    // Roof details
-    const rx = b.x + inset;
-    const ry = b.y + inset;
-    const rw = b.w - inset * 2;
-    const rh = b.h - inset * 2;
+    // Crisp parapet highlight
+    ctx.strokeStyle = pal.trim;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(rx + 2, ry + 2, rw - 4, rh - 4);
 
-    if (b.hasPool && rw > 54 && rh > 54) {
-      const pw = Math.min(48, rw * 0.52);
-      const ph = Math.min(28, rh * 0.42);
-      const px = rx + (rw - pw) * 0.5;
-      const py = ry + (rh - ph) * 0.5;
-      ctx.fillStyle = '#e8f6f8';
-      roundRectPath(ctx, px - 3, py - 3, pw + 6, ph + 6, 4);
-      ctx.fill();
-      ctx.fillStyle = '#38d3dc';
-      roundRectPath(ctx, px, py, pw, ph, 3);
-      ctx.fill();
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
-      ctx.fillRect(px + 4, py + 4, pw - 8, 4);
-    } else if (b.hasHelipad && rw > 68 && rh > 68) {
+    // Recessed inner roof deck
+    if (rw > 28 && rh > 28) {
+      const pad = 7;
+      ctx.fillStyle = 'rgba(20, 32, 48, 0.1)';
+      ctx.fillRect(rx + pad, ry + pad, rw - pad * 2, rh - pad * 2);
+
+      const style = pal.style;
       const cx = rx + rw * 0.5;
       const cy = ry + rh * 0.5;
-      const rad = Math.min(rw, rh) * 0.3;
-      ctx.fillStyle = '#536070';
-      ctx.beginPath();
-      ctx.arc(cx, cy, rad, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = '#ffd166';
-      ctx.lineWidth = 2.5;
-      ctx.beginPath();
-      ctx.arc(cx, cy, rad - 4, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.fillStyle = '#ffd166';
-      ctx.font = `900 ${Math.round(rad * 0.9)}px sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('H', cx, cy + 1);
-    } else if (b.hasSkylight && rw > 36 && rh > 36) {
-      const sw = Math.min(34, rw * 0.48);
-      const sh = Math.min(22, rh * 0.4);
-      const sx = rx + (rw - sw) * 0.5;
-      const sy = ry + (rh - sh) * 0.5;
-      ctx.fillStyle = '#79b8d9';
-      ctx.fillRect(sx, sy, sw, sh);
-      ctx.strokeStyle = '#eef8fc';
-      ctx.lineWidth = 1.5;
-      ctx.strokeRect(sx, sy, sw, sh);
-      ctx.beginPath();
-      ctx.moveTo(sx + sw * 0.5, sy);
-      ctx.lineTo(sx + sw * 0.5, sy + sh);
-      ctx.stroke();
-    } else if (rw > 28 && rh > 28) {
-      // Rooftop AC units / penthouse box
-      ctx.fillStyle = 'rgba(84, 98, 118, 0.25)';
-      ctx.fillRect(rx + 6, ry + 6, 12, 10);
-      ctx.fillStyle = '#c8d2dc';
-      ctx.fillRect(rx + 5, ry + 5, 11, 9);
-      ctx.fillStyle = '#7e8e9e';
-      ctx.beginPath();
-      ctx.arc(rx + 10.5, ry + 9.5, 3, 0, Math.PI * 2);
-      ctx.fill();
 
-      if (rw > 60) {
-        ctx.fillStyle = '#c8d2dc';
-        ctx.fillRect(rx + 20, ry + 5, 10, 9);
+      if (style === 'pool' && rw >= 58 && rh >= 48) {
+        // Resort rooftop pool
+        const pw = Math.min(rw - 26, 46);
+        const ph = Math.min(rh - 24, 26);
+        ctx.fillStyle = '#eef4f7';
+        ctx.fillRect(cx - pw * 0.5 - 3, cy - ph * 0.5 - 3, pw + 6, ph + 6);
+        ctx.fillStyle = '#29c7d9';
+        ctx.fillRect(cx - pw * 0.5, cy - ph * 0.5, pw, ph);
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
+        ctx.fillRect(cx - pw * 0.5 + 3, cy - ph * 0.5 + 3, pw * 0.45, 4);
+      } else if (style === 'helipad' && rw >= 66 && rh >= 66) {
+        // Downtown tower helipad
+        const rad = Math.min(rw, rh) * 0.28;
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.75)';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.arc(cx, cy, rad, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.fillStyle = '#ffd166';
+        ctx.font = `800 ${Math.round(rad * 1.1)}px 'Avenir Next', sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('H', cx, cy + 1);
+      } else if (style === 'skylight' && rw >= 44 && rh >= 44) {
+        const sw = Math.min(rw - 24, 38);
+        const sh = Math.min(rh - 24, 24);
+        ctx.fillStyle = '#2c536e';
+        ctx.fillRect(cx - sw * 0.5, cy - sh * 0.5, sw, sh);
+        ctx.strokeStyle = '#9be2f5';
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(cx - sw * 0.5, cy - sh * 0.5, sw, sh);
+        ctx.beginPath();
+        ctx.moveTo(cx, cy - sh * 0.5);
+        ctx.lineTo(cx, cy + sh * 0.5);
+        ctx.moveTo(cx - sw * 0.5, cy);
+        ctx.lineTo(cx + sw * 0.5, cy);
+        ctx.stroke();
+      } else if (style === 'terracotta' && rw >= 40 && rh >= 40) {
+        // Coastal villa hipped ridge
+        ctx.strokeStyle = 'rgba(255, 240, 220, 0.5)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(rx + pad, ry + pad);
+        ctx.lineTo(cx, cy);
+        ctx.lineTo(rx + rw - pad, ry + pad);
+        ctx.moveTo(rx + pad, ry + rh - pad);
+        ctx.lineTo(cx, cy);
+        ctx.lineTo(rx + rw - pad, ry + rh - pad);
+        ctx.stroke();
+      } else {
+        // Rooftop HVAC & mechanical box
+        const ux = rx + pad + 5;
+        const uy = ry + pad + 5;
+        ctx.fillStyle = '#cfd8df';
+        ctx.fillRect(ux, uy, 16, 14);
+        ctx.fillStyle = '#536270';
+        ctx.beginPath();
+        ctx.arc(ux + 8, uy + 7, 4.5, 0, Math.PI * 2);
+        ctx.fill();
+        if (rw > 72) {
+          ctx.fillStyle = '#b9c6d0';
+          ctx.fillRect(ux + 22, uy + 2, 12, 10);
+        }
       }
     }
 
-    // Coastal striped awning on south facade of storefronts
-    if (b.w >= 54 && b.seed > 0.38) {
-      const awW = Math.min(36, b.w * 0.45);
+    // Subtle striped boutique awning on south street edge of selected buildings
+    if (b.w >= 54 && hash2d(b.x, b.y, SEED + 223) > 0.62) {
+      const awW = Math.min(b.w - 14, 38);
       const awX = b.x + (b.w - awW) * 0.5;
       const awY = b.y + b.h;
-      ctx.fillStyle = b.awning;
-      ctx.fillRect(awX, awY, awW, 6);
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.72)';
-      for (let x = awX + 4; x < awX + awW - 3; x += 8) {
-        ctx.fillRect(x, awY, 3, 6);
+      ctx.fillStyle = '#ff6b6b';
+      ctx.fillRect(awX, awY, awW, 5);
+      ctx.fillStyle = '#ffffff';
+      for (let sx = awX + 4; sx < awX + awW - 2; sx += 8) {
+        ctx.fillRect(sx, awY, 4, 5);
       }
     }
   }
 }
 
-function drawMissionBeacon(ctx, mission, time) {
-  if (!mission || mission.done || !mission.target) return;
-  const { x, y } = mission.target;
-  if (typeof x !== 'number' || typeof y !== 'number') return;
+function drawPalmTree(ctx, x, y, scale, seed, time) {
+  const sway = Math.sin(time * 1.45 + seed * 6.28) * 0.06;
+  const fronds = 8;
+  const r = 19 * scale;
 
-  const pulse = (Math.sin(time * 4.5) + 1) * 0.5;
-  const outerR = 26 + pulse * 10;
-
+  // Soft ground shadow
   ctx.save();
-  ctx.translate(x, y);
-
-  // Soft golden aura
-  const grad = ctx.createRadialGradient(0, 0, 4, 0, 0, outerR + 14);
-  grad.addColorStop(0, 'rgba(255, 214, 70, 0.52)');
-  grad.addColorStop(0.65, 'rgba(255, 122, 89, 0.24)');
-  grad.addColorStop(1, 'rgba(255, 122, 89, 0)');
-  ctx.fillStyle = grad;
-  ctx.beginPath();
-  ctx.arc(0, 0, outerR + 14, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Pulsing outer ring
-  ctx.strokeStyle = 'rgba(255, 214, 70, 0.92)';
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.arc(0, 0, outerR, 0, Math.PI * 2);
-  ctx.stroke();
-
-  // Rotating dashed inner ring
-  ctx.save();
-  ctx.rotate(time * 1.4);
-  ctx.strokeStyle = '#ffffff';
-  ctx.lineWidth = 2;
-  ctx.setLineDash([7, 6]);
-  ctx.beginPath();
-  ctx.arc(0, 0, 17, 0, Math.PI * 2);
-  ctx.stroke();
+  ctx.translate(x + 9 * scale, y + 10 * scale);
+  ctx.rotate(seed * 6.28 + sway * 0.6);
+  ctx.fillStyle = 'rgba(14, 28, 36, 0.22)';
+  for (let i = 0; i < fronds; i++) {
+    ctx.rotate((Math.PI * 2) / fronds);
+    ctx.beginPath();
+    ctx.ellipse(r * 0.55, 0, r * 0.58, r * 0.19, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
   ctx.restore();
 
-  // Center diamond marker
-  const bob = Math.sin(time * 5.2) * 3;
-  ctx.fillStyle = '#ffd166';
-  ctx.strokeStyle = '#132030';
-  ctx.lineWidth = 2;
+  // Slight trunk lean
+  ctx.strokeStyle = '#8b6542';
+  ctx.lineWidth = 4 * scale;
+  ctx.lineCap = 'round';
   ctx.beginPath();
-  ctx.moveTo(0, -11 + bob);
-  ctx.lineTo(8, bob);
-  ctx.lineTo(0, 11 + bob);
-  ctx.lineTo(-8, bob);
-  ctx.closePath();
-  ctx.fill();
+  ctx.moveTo(x + 2, y + 3);
+  ctx.lineTo(x, y);
   ctx.stroke();
 
+  // Layered lush palm fronds
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(seed * 6.28 + sway);
+  for (let i = 0; i < fronds; i++) {
+    ctx.rotate((Math.PI * 2) / fronds);
+    ctx.fillStyle = i % 2 === 0 ? '#2b9c54' : '#43be68';
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.quadraticCurveTo(r * 0.52, -r * 0.26, r, -r * 0.03);
+    ctx.quadraticCurveTo(r * 0.52, r * 0.24, 0, 0);
+    ctx.fill();
+
+    // Sunlit center rib
+    ctx.strokeStyle = '#8ee38b';
+    ctx.lineWidth = 1.1;
+    ctx.beginPath();
+    ctx.moveTo(2, 0);
+    ctx.lineTo(r * 0.82, 0);
+    ctx.stroke();
+  }
+
+  // Crown coconuts
+  ctx.fillStyle = '#5c3c22';
+  ctx.beginPath();
+  ctx.arc(2.2, 1.5, 2.3 * scale, 0, Math.PI * 2);
+  ctx.arc(-2.1, 1.2, 2.1 * scale, 0, Math.PI * 2);
+  ctx.arc(0, -2.2, 2.2 * scale, 0, Math.PI * 2);
+  ctx.fill();
   ctx.restore();
 }
 
-function drawCar(ctx, car, opts) {
-  const { isPolice, isPlayerCar, time, lighting, wanted, index } = opts;
-  const len = car.w || car.length || CAR_W;
-  const wid = car.h || car.width || CAR_H;
-  const angle = car.angle || 0;
-  const model = String(car.model || (isPolice ? 'police' : '')).toLowerCase();
-  const bodyColor = isPolice
-    ? '#18202c'
-    : car.color || CAR_COLORS[index % CAR_COLORS.length];
+function drawPalmTrees(ctx, metrics, roadLines, buildings, cam, viewW, viewH, time) {
+  const ts = metrics.ts;
+  const beachTop = Math.min(metrics.hPx - ts * 3, BEACH_TILE_Y * ts);
+
+  // Boulevard palms along horizontal avenues (sidewalk corners)
+  for (const r of roadLines.hRows) {
+    const yNorth = r * ts - 9;
+    const ySouth = r * ts + ts + 9;
+    for (let x = ts + 48; x < metrics.wPx - 48; x += ts * 2) {
+      if (x < cam.x - 40 || x > cam.x + viewW + 40) continue;
+      // Avoid vertical roads
+      const tileX = Math.floor(x / ts);
+      if (tileX % ROAD_EVERY === 0) continue;
+
+      if (yNorth >= cam.y - 40 && yNorth <= cam.y + viewH + 40 && yNorth > 16) {
+        if (hash2d(x, yNorth, 51) > 0.35 && !pointHitsBuildings(x, yNorth, 6, buildings)) {
+          drawPalmTree(ctx, x, yNorth, 0.82 + hash2d(x, yNorth, 52) * 0.24, hash2d(x, yNorth, 53), time);
+        }
+      }
+      if (ySouth >= cam.y - 40 && ySouth <= cam.y + viewH + 40 && ySouth < beachTop - 6) {
+        if (hash2d(x, ySouth, 61) > 0.42 && !pointHitsBuildings(x, ySouth, 6, buildings)) {
+          drawPalmTree(ctx, x, ySouth, 0.82 + hash2d(x, ySouth, 62) * 0.24, hash2d(x, ySouth, 63), time);
+        }
+      }
+    }
+  }
+
+  // Iconic Ocean Drive & Beachfront palm row
+  if (cam.y + viewH >= beachTop - 50) {
+    for (let px = 42; px < metrics.wPx - 32; px += 76) {
+      if (px < cam.x - 45 || px > cam.x + viewW + 45) continue;
+      const py = beachTop + 12 + (hash2d(px, 99) - 0.5) * 14;
+      if (!pointHitsBuildings(px, py, 10, buildings)) {
+        drawPalmTree(ctx, px, py, 0.98 + hash2d(px, 100) * 0.28, hash2d(px, 101), time);
+      }
+    }
+  }
+}
+
+function drawVehicle(ctx, car, opts) {
+  const { isPolice = false, isPlayerCar = false, time = 0 } = opts || {};
+  const w = car.w || CAR_W;
+  const h = car.h || CAR_H;
+  const hw = w * 0.5;
+  const hh = h * 0.5;
+  const color = isPolice
+    ? '#171c26'
+    : car.color || CAR_COLORS[Math.abs(Math.floor((car.x + car.y) * 0.17)) % CAR_COLORS.length];
+  const model = (car.model || '').toLowerCase();
+  const isConvertible = !isPolice && (model.includes('conv') || model.includes('roadster'));
+  const isTaxi = !isPolice && model.includes('taxi');
+  const isSport = !isPolice && (isPlayerCar || model.includes('sport') || model.includes('gt') || model.includes('coupe'));
+  const isCourier = Boolean(car.isCourier || car.isTarget);
 
   ctx.save();
   ctx.translate(car.x, car.y);
-  ctx.rotate(angle);
 
-  // Subtle player highlight glow
+  // Subtle player / courier beacon ring under car
   if (isPlayerCar) {
-    ctx.strokeStyle = 'rgba(91, 227, 216, 0.65)';
+    ctx.strokeStyle = 'rgba(54, 214, 207, 0.65)';
     ctx.lineWidth = 2;
-    roundRectPath(ctx, -len * 0.5 - 5, -wid * 0.5 - 5, len + 10, wid + 10, 8);
-    ctx.stroke();
-  }
-
-  // Courier mission target ring
-  if (car.isCourier || car.isTarget || car.role === 'courier') {
-    const pulse = (Math.sin(time * 6) + 1) * 0.5;
-    ctx.strokeStyle = `rgba(255, 209, 102, ${0.65 + pulse * 0.35})`;
-    ctx.lineWidth = 2.5;
     ctx.beginPath();
-    ctx.arc(0, 0, len * 0.72 + pulse * 4, 0, Math.PI * 2);
+    ctx.ellipse(0, 0, hw + 7, hh + 7, car.angle || 0, 0, Math.PI * 2);
+    ctx.stroke();
+  } else if (isCourier) {
+    const pulse = 0.65 + 0.35 * Math.sin(time * 7);
+    ctx.strokeStyle = `rgba(255, 209, 102, ${pulse})`;
+    ctx.lineWidth = 2.6;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, hw + 9, hh + 9, car.angle || 0, 0, Math.PI * 2);
     ctx.stroke();
   }
 
-  // Headlight beams at dawn / dusk or police pursuit
-  if (lighting === 'dawn' || lighting === 'dusk' || isPolice) {
-    const beamLen = isPolice ? 62 : 52;
-    const beamGrad = ctx.createLinearGradient(len * 0.5, 0, len * 0.5 + beamLen, 0);
-    beamGrad.addColorStop(0, 'rgba(255, 247, 198, 0.34)');
-    beamGrad.addColorStop(1, 'rgba(255, 247, 198, 0)');
+  ctx.rotate(car.angle || 0);
+
+  // Ground drop shadow
+  ctx.fillStyle = 'rgba(10, 18, 30, 0.34)';
+  roundRectPath(ctx, -hw + 3, -hh + 4, w, h, 6);
+  ctx.fill();
+
+  // Four rubber tires
+  ctx.fillStyle = '#181c22';
+  const tw = 9;
+  const th = 4;
+  ctx.fillRect(hw - 13, -hh - 1.5, tw, th);
+  ctx.fillRect(hw - 13, hh - 2.5, tw, th);
+  ctx.fillRect(-hw + 5, -hh - 1.5, tw, th);
+  ctx.fillRect(-hw + 5, hh - 2.5, tw, th);
+
+  // Main chassis body
+  ctx.fillStyle = color;
+  roundRectPath(ctx, -hw, -hh, w, h, 6);
+  ctx.fill();
+
+  // Police white midsection doors + roof
+  if (isPolice) {
+    ctx.fillStyle = '#f8fafc';
+    ctx.fillRect(-hw * 0.42, -hh + 1, w * 0.46, h - 2);
+    // Front black push bar
+    ctx.fillStyle = '#0e1117';
+    ctx.fillRect(hw - 1, -hh + 4, 3, h - 8);
+  }
+
+  // Subtle chassis outline & sheen
+  ctx.strokeStyle = 'rgba(0, 0, 0, 0.32)';
+  ctx.lineWidth = 1.2;
+  roundRectPath(ctx, -hw, -hh, w, h, 6);
+  ctx.stroke();
+
+  // Sport racing stripe
+  if (isSport) {
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
+    ctx.fillRect(-hw + 3, -2.5, w - 6, 5);
+  }
+
+  // Front windshield (angle=0 faces +X / right)
+  ctx.fillStyle = '#1b3554';
+  ctx.beginPath();
+  ctx.moveTo(hw * 0.34, -hh + 3);
+  ctx.lineTo(hw * 0.62, -hh + 4.5);
+  ctx.lineTo(hw * 0.62, hh - 4.5);
+  ctx.lineTo(hw * 0.34, hh - 3);
+  ctx.closePath();
+  ctx.fill();
+
+  // Windshield glass glint
+  ctx.strokeStyle = 'rgba(182, 236, 255, 0.68)';
+  ctx.lineWidth = 1.4;
+  ctx.beginPath();
+  ctx.moveTo(hw * 0.43, -hh + 5);
+  ctx.lineTo(hw * 0.55, -2);
+  ctx.stroke();
+
+  // Rear window
+  ctx.fillStyle = '#1b3554';
+  ctx.beginPath();
+  ctx.moveTo(-hw * 0.68, -hh + 4.5);
+  ctx.lineTo(-hw * 0.44, -hh + 3.5);
+  ctx.lineTo(-hw * 0.44, hh - 3.5);
+  ctx.lineTo(-hw * 0.68, hh - 4.5);
+  ctx.closePath();
+  ctx.fill();
+
+  // Roof or Convertible interior
+  if (isConvertible) {
+    ctx.fillStyle = '#8f3d2e';
+    roundRectPath(ctx, -hw * 0.42, -hh + 3.5, w * 0.36, h - 7, 3);
+    ctx.fill();
+    ctx.fillStyle = '#f2d0a7';
+    ctx.beginPath();
+    ctx.arc(2, -3.5, 3, 0, Math.PI * 2);
+    ctx.fill();
+  } else {
+    ctx.fillStyle = isPolice ? '#ffffff' : 'rgba(255, 255, 255, 0.2)';
+    roundRectPath(ctx, -hw * 0.44, -hh + 3.5, w * 0.39, h - 7, 3);
+    ctx.fill();
+  }
+
+  // Taxi roof sign
+  if (isTaxi) {
+    ctx.fillStyle = '#141821';
+    ctx.fillRect(-4, -5, 8, 10);
+    ctx.fillStyle = '#ffe66d';
+    ctx.fillRect(-3, -4, 6, 8);
+  }
+
+  // Side mirrors (instant front-direction cue)
+  ctx.fillStyle = isPolice ? '#171c26' : color;
+  ctx.fillRect(hw * 0.28, -hh - 2.2, 4, 2.5);
+  ctx.fillRect(hw * 0.28, hh - 0.3, 4, 2.5);
+
+  // Headlights (front = +X)
+  ctx.fillStyle = '#fff6c4';
+  ctx.fillRect(hw - 2.5, -hh + 2.5, 2.5, 4.5);
+  ctx.fillRect(hw - 2.5, hh - 7, 2.5, 4.5);
+
+  // Soft headlight beams when moving fast
+  if (Math.abs(car.speed || 0) > 120 || isPlayerCar) {
+    const beamGrad = ctx.createLinearGradient(hw, 0, hw + 44, 0);
+    beamGrad.addColorStop(0, 'rgba(255, 248, 200, 0.28)');
+    beamGrad.addColorStop(1, 'rgba(255, 248, 200, 0)');
     ctx.fillStyle = beamGrad;
     ctx.beginPath();
-    ctx.moveTo(len * 0.48, -wid * 0.36);
-    ctx.lineTo(len * 0.48 + beamLen, -wid * 0.85);
-    ctx.lineTo(len * 0.48 + beamLen, wid * 0.85);
-    ctx.lineTo(len * 0.48, wid * 0.36);
+    ctx.moveTo(hw, -hh + 3);
+    ctx.lineTo(hw + 44, -hh - 7);
+    ctx.lineTo(hw + 44, hh + 7);
+    ctx.lineTo(hw, hh - 3);
     ctx.closePath();
     ctx.fill();
   }
 
-  // Drop shadow
-  ctx.save();
-  ctx.translate(3, 4);
-  ctx.fillStyle = 'rgba(10, 18, 30, 0.34)';
-  roundRectPath(ctx, -len * 0.5, -wid * 0.5, len, wid, 6);
-  ctx.fill();
-  ctx.restore();
+  // Taillights (rear = -X)
+  ctx.fillStyle = '#ff3b4e';
+  ctx.fillRect(-hw, -hh + 2.5, 2.4, 4.5);
+  ctx.fillRect(-hw, hh - 7, 2.4, 4.5);
 
-  // Tires
-  ctx.fillStyle = '#151921';
-  const wx = len * 0.28;
-  const wy = wid * 0.48;
-  ctx.fillRect(wx - 4, -wy - 1.5, 8, 3);
-  ctx.fillRect(wx - 4, wy - 1.5, 8, 3);
-  ctx.fillRect(-wx - 4, -wy - 1.5, 8, 3);
-  ctx.fillRect(-wx - 4, wy - 1.5, 8, 3);
-
-  // Main chassis
-  ctx.fillStyle = bodyColor;
-  roundRectPath(ctx, -len * 0.5, -wid * 0.5, len, wid, 6);
-  ctx.fill();
-
-  // Police white center livery
+  // Police flashing red/blue lightbar + luminous halos
   if (isPolice) {
-    ctx.fillStyle = '#f5f8fc';
-    ctx.fillRect(-len * 0.18, -wid * 0.48, len * 0.38, wid * 0.96);
-    // Front push bumper
-    ctx.fillStyle = '#475569';
-    ctx.fillRect(len * 0.47, -wid * 0.38, 3.5, wid * 0.76);
-  }
-
-  // Sports racing stripes
-  if (!isPolice && (model === 'sports' || model === 'coupe' || isPlayerCar)) {
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
-    ctx.fillRect(-len * 0.46, -2.5, len * 0.92, 1.8);
-    ctx.fillRect(-len * 0.46, 0.7, len * 0.92, 1.8);
-  }
-
-  // Windshield (front = +x) & rear window (-x)
-  ctx.fillStyle = '#1c334a';
-  roundRectPath(ctx, len * 0.08, -wid * 0.38, len * 0.2, wid * 0.76, 3);
-  ctx.fill();
-  ctx.fillStyle = 'rgba(182, 232, 255, 0.38)';
-  ctx.fillRect(len * 0.17, -wid * 0.32, 3, wid * 0.64);
-
-  if (model === 'convertible') {
-    // Open cabin interior
-    ctx.fillStyle = '#c89b6e';
-    roundRectPath(ctx, -len * 0.22, -wid * 0.34, len * 0.28, wid * 0.68, 3);
-    ctx.fill();
-    ctx.fillStyle = '#7f5539';
-    ctx.fillRect(-len * 0.16, -wid * 0.28, 6, wid * 0.22);
-    ctx.fillRect(-len * 0.16, wid * 0.06, 6, wid * 0.22);
-  } else {
-    // Rear window
-    ctx.fillStyle = '#1c334a';
-    roundRectPath(ctx, -len * 0.34, -wid * 0.34, len * 0.13, wid * 0.68, 2.5);
-    ctx.fill();
-
-    // Roof panel
-    ctx.fillStyle = isPolice ? '#ffffff' : 'rgba(255, 255, 255, 0.22)';
-    roundRectPath(ctx, -len * 0.2, -wid * 0.35, len * 0.27, wid * 0.7, 3);
-    ctx.fill();
-  }
-
-  // Crisp body outline
-  ctx.strokeStyle = 'rgba(12, 22, 34, 0.45)';
-  ctx.lineWidth = 1.2;
-  roundRectPath(ctx, -len * 0.5, -wid * 0.5, len, wid, 6);
-  ctx.stroke();
-
-  // Headlights (+x)
-  ctx.fillStyle = '#fff9d6';
-  ctx.fillRect(len * 0.45, -wid * 0.38, 3, 4.5);
-  ctx.fillRect(len * 0.45, wid * 0.38 - 4.5, 3, 4.5);
-
-  // Taillights (-x)
-  const braking = (car.speed || 0) < -4 || Boolean(car.braking);
-  ctx.fillStyle = braking ? '#ff2a4b' : '#d62839';
-  ctx.fillRect(-len * 0.5, -wid * 0.38, 2.5, 4.5);
-  ctx.fillRect(-len * 0.5, wid * 0.38 - 4.5, 2.5, 4.5);
-
-  // Police flashing red/blue light bar
-  if (isPolice) {
-    const sirenOn = car.siren !== false && (wanted > 0 || car.siren === true || Math.abs(car.speed || 0) > 10);
-    const phase = Math.floor(time * 9 + index) % 2;
+    const phase = Math.floor(time * 9) % 2 === 0;
+    const redBright = phase ? 1 : 0.35;
+    const blueBright = phase ? 0.35 : 1;
 
     // Lightbar housing
-    ctx.fillStyle = '#222b38';
-    roundRectPath(ctx, -4, -wid * 0.34, 7, wid * 0.68, 2);
+    ctx.fillStyle = '#11161f';
+    ctx.fillRect(-3.5, -hh + 3.5, 7, h - 7);
+
+    // Red lamp (top/left) & Blue lamp (bottom/right)
+    ctx.fillStyle = phase ? '#ff2a4b' : '#801526';
+    ctx.fillRect(-2.5, -hh + 4.5, 5, (h - 10) * 0.48);
+    ctx.fillStyle = !phase ? '#2494ff' : '#12467a';
+    ctx.fillRect(-2.5, 0.5, 5, (h - 10) * 0.48);
+
+    // Radiant lightbar glow halos
+    const rGrad = ctx.createRadialGradient(0, -hh * 0.45, 1, 0, -hh * 0.45, 24);
+    rGrad.addColorStop(0, `rgba(255, 42, 75, ${0.72 * redBright})`);
+    rGrad.addColorStop(1, 'rgba(255, 42, 75, 0)');
+    ctx.fillStyle = rGrad;
+    ctx.beginPath();
+    ctx.arc(0, -hh * 0.45, 24, 0, Math.PI * 2);
     ctx.fill();
 
-    const redBright = !sirenOn || phase === 0;
-    const blueBright = !sirenOn || phase === 1;
-
-    ctx.fillStyle = redBright ? '#ff2d46' : '#781d2a';
-    ctx.fillRect(-3, -wid * 0.3, 5, wid * 0.27);
-    ctx.fillStyle = blueBright ? '#22a6ff' : '#184266';
-    ctx.fillRect(-3, wid * 0.03, 5, wid * 0.27);
-
-    if (sirenOn) {
-      const gx = -0.5;
-      const gy = phase === 0 ? -wid * 0.22 : wid * 0.22;
-      const glowColor = phase === 0 ? 'rgba(255, 45, 70, 0.55)' : 'rgba(34, 166, 255, 0.55)';
-      const halo = ctx.createRadialGradient(gx, gy, 1, gx, gy, 24);
-      halo.addColorStop(0, glowColor);
-      halo.addColorStop(1, 'rgba(0, 0, 0, 0)');
-      ctx.fillStyle = halo;
-      ctx.beginPath();
-      ctx.arc(gx, gy, 24, 0, Math.PI * 2);
-      ctx.fill();
-    }
+    const bGrad = ctx.createRadialGradient(0, hh * 0.45, 1, 0, hh * 0.45, 24);
+    bGrad.addColorStop(0, `rgba(36, 148, 255, ${0.72 * blueBright})`);
+    bGrad.addColorStop(1, 'rgba(36, 148, 255, 0)');
+    ctx.fillStyle = bGrad;
+    ctx.beginPath();
+    ctx.arc(0, hh * 0.45, 24, 0, Math.PI * 2);
+    ctx.fill();
   }
 
   ctx.restore();
 }
 
 function drawPed(ctx, ped, index, time) {
-  if (ped.dead || ped.alive === false || (typeof ped.health === 'number' && ped.health <= 0)) {
-    return;
-  }
+  const dead = ped.alive === false || ped.dead === true || (typeof ped.health === 'number' && ped.health <= 0);
   const angle = ped.angle || 0;
-  const moving = Math.abs(ped.speed || 0) > 4;
-  const stride = moving ? Math.sin(time * 10 + index * 1.7) * 3 : 0;
-  const shirt = ped.color || ped.shirtColor || PED_SHIRTS[index % PED_SHIRTS.length];
-  const skin = ped.skinColor || SKIN_TONES[index % SKIN_TONES.length];
-  const hair = ped.hairColor || HAIR_TONES[index % HAIR_TONES.length];
+  const speed = Math.abs(ped.speed || 0);
+  const stride = speed > 4 && !dead ? Math.sin(time * 9 + index * 1.7) * 3.2 : 0;
+
+  const shirt = ped.color || ped.shirt || PED_SHIRTS[index % PED_SHIRTS.length];
+  const skin = PED_SKINS[(index * 3) % PED_SKINS.length];
+  const hair = PED_HAIR[(index * 5) % PED_HAIR.length];
 
   ctx.save();
   ctx.translate(ped.x, ped.y);
   ctx.rotate(angle);
+  if (dead) ctx.globalAlpha = 0.55;
 
-  // Soft ground shadow
-  ctx.fillStyle = 'rgba(12, 20, 32, 0.25)';
+  // Ground shadow
+  ctx.fillStyle = 'rgba(12, 20, 34, 0.25)';
   ctx.beginPath();
-  ctx.ellipse(2, 3, 8, 9, 0, 0, Math.PI * 2);
+  ctx.ellipse(2, 3, 7.5, 9, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Swinging arms
-  ctx.fillStyle = skin;
+  // Stepping shoes
+  ctx.fillStyle = '#242933';
   ctx.beginPath();
-  ctx.arc(2 + stride, -7, 2.5, 0, Math.PI * 2);
-  ctx.arc(2 - stride, 7, 2.5, 0, Math.PI * 2);
+  ctx.ellipse(stride, -4, 3.2, 2, 0, 0, Math.PI * 2);
+  ctx.ellipse(-stride, 4, 3.2, 2, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Torso / shoulders
+  // Shoulders / torso
   ctx.fillStyle = shirt;
-  ctx.strokeStyle = 'rgba(15, 24, 36, 0.4)';
-  ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.ellipse(0, 0, 6.2, 8.2, 0, 0, Math.PI * 2);
+  ctx.ellipse(0, 0, 5.5, 8.5, 0, 0, Math.PI * 2);
   ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,0.22)';
+  ctx.lineWidth = 1;
   ctx.stroke();
 
-  // Head
+  // Swinging hands
   ctx.fillStyle = skin;
   ctx.beginPath();
-  ctx.arc(1.5, 0, 4.6, 0, Math.PI * 2);
+  ctx.arc(2 - stride * 0.6, -8.5, 2.2, 0, Math.PI * 2);
+  ctx.arc(2 + stride * 0.6, 8.5, 2.2, 0, Math.PI * 2);
   ctx.fill();
 
-  // Hair cap on back of head (so facing direction is obvious)
+  // Head + hair
+  ctx.fillStyle = skin;
+  ctx.beginPath();
+  ctx.arc(1.2, 0, 4.6, 0, Math.PI * 2);
+  ctx.fill();
+
   ctx.fillStyle = hair;
   ctx.beginPath();
-  ctx.arc(0.5, 0, 4.4, Math.PI * 0.55, Math.PI * 1.45);
-  ctx.closePath();
+  ctx.arc(-0.3, 0, 4.3, Math.PI * 0.48, Math.PI * 1.52);
   ctx.fill();
 
   ctx.restore();
@@ -997,747 +1031,719 @@ function drawPed(ctx, ped, index, time) {
 
 function drawPlayerOnFoot(ctx, player, time) {
   const angle = player.angle || 0;
-  const r = PLAYER_R || 14;
-  const stride = Math.abs(player.speed || 0) > 6 ? Math.sin(time * 12) * 3.5 : 0;
+  const speed = Math.abs(player.speed || 0);
+  const stride = speed > 5 ? Math.sin(time * 11) * 4 : 0;
+  const r = PLAYER_R;
 
   ctx.save();
   ctx.translate(player.x, player.y);
 
-  // Subtle player locator ring
-  ctx.strokeStyle = 'rgba(91, 227, 216, 0.78)';
-  ctx.lineWidth = 2;
+  // Crisp player locator ring
+  const pulse = 0.7 + 0.3 * Math.sin(time * 5);
+  ctx.strokeStyle = `rgba(54, 214, 207, ${pulse})`;
+  ctx.lineWidth = 2.2;
   ctx.beginPath();
-  ctx.arc(0, 0, r + 4, 0, Math.PI * 2);
+  ctx.arc(0, 0, r + 5, 0, Math.PI * 2);
   ctx.stroke();
 
   ctx.rotate(angle);
 
-  // Soft shadow
-  ctx.fillStyle = 'rgba(10, 18, 30, 0.30)';
+  // Drop shadow
+  ctx.fillStyle = 'rgba(10, 18, 30, 0.3)';
   ctx.beginPath();
-  ctx.ellipse(2.5, 3.5, 9, 11, 0, 0, Math.PI * 2);
+  ctx.ellipse(3, 4, 10, 12, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Arms
-  ctx.fillStyle = '#e8b48e';
+  // Boots
+  ctx.fillStyle = '#1b202a';
   ctx.beginPath();
-  ctx.arc(3 + stride, -9, 3.1, 0, Math.PI * 2);
-  ctx.arc(4 - stride, 9, 3.1, 0, Math.PI * 2);
+  ctx.ellipse(stride, -5, 4.2, 2.6, 0, 0, Math.PI * 2);
+  ctx.ellipse(-stride, 5, 4.2, 2.6, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Coastal jacket shoulders
-  ctx.fillStyle = '#18b8b0';
-  ctx.strokeStyle = '#0d2232';
-  ctx.lineWidth = 1.5;
+  // Rex's signature coastal coral jacket over white tee
+  ctx.fillStyle = '#ff6b4a';
   ctx.beginPath();
-  ctx.ellipse(0, 0, 7.8, 10.4, 0, 0, Math.PI * 2);
+  ctx.ellipse(0, 0, 7.5, 11.5, 0, 0, Math.PI * 2);
   ctx.fill();
+  ctx.fillStyle = '#f8fafc';
+  ctx.fillRect(0, -4, 6.5, 8);
+  ctx.strokeStyle = '#16202e';
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.ellipse(0, 0, 7.5, 11.5, 0, 0, Math.PI * 2);
   ctx.stroke();
 
-  // White tee front stripe
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(1, -3.5, 5.5, 7);
-
-  // Head
-  ctx.fillStyle = '#e8b48e';
+  // Arms / weapon forward
+  ctx.fillStyle = '#e7b996';
   ctx.beginPath();
-  ctx.arc(2, 0, 5.6, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(15, 24, 36, 0.35)';
-  ctx.lineWidth = 1;
-  ctx.stroke();
-
-  // Hair
-  ctx.fillStyle = '#241a16';
-  ctx.beginPath();
-  ctx.arc(0.8, 0, 5.4, Math.PI * 0.55, Math.PI * 1.45);
-  ctx.closePath();
+  ctx.arc(5 - stride * 0.5, -10.5, 3, 0, Math.PI * 2);
+  ctx.arc(7 + stride * 0.4, 9.5, 3, 0, Math.PI * 2);
   ctx.fill();
 
-  // Sunglasses facing forward
-  ctx.fillStyle = '#121821';
-  ctx.fillRect(5.2, -3.5, 2.2, 7);
+  if (player.weapon && String(player.weapon).toLowerCase() !== 'fists') {
+    ctx.fillStyle = '#252c38';
+    ctx.fillRect(7, 5, 11, 3.2);
+  }
+
+  // Head & styled dark hair + sunglasses
+  ctx.fillStyle = '#e7b996';
+  ctx.beginPath();
+  ctx.arc(1.5, 0, 6.2, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = '#1e222b';
+  ctx.beginPath();
+  ctx.arc(-0.5, 0, 5.9, Math.PI * 0.45, Math.PI * 1.55);
+  ctx.fill();
+
+  // Sunglasses visor on front
+  ctx.fillStyle = '#0f172a';
+  ctx.fillRect(5.2, -4, 2.4, 8);
 
   ctx.restore();
 }
 
-function drawPalmTrees(ctx, meta, camX, camY, viewW, viewH, time) {
-  const pad = 44;
-  for (let i = 0; i < meta.palms.length; i++) {
-    const palm = meta.palms[i];
-    if (
-      palm.x < camX - pad ||
-      palm.x > camX + viewW + pad ||
-      palm.y < camY - pad ||
-      palm.y > camY + viewH + pad
-    ) {
-      continue;
-    }
-
-    const sway = Math.sin(time * 1.6 + palm.phase) * 0.06;
-
-    // Soft frond shadow on ground
-    ctx.fillStyle = 'rgba(14, 28, 38, 0.19)';
-    ctx.beginPath();
-    ctx.arc(palm.x + 11, palm.y + 13, palm.r * 0.92, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Trunk hint
-    ctx.strokeStyle = '#9c7853';
-    ctx.lineWidth = 4;
-    ctx.beginPath();
-    ctx.moveTo(palm.x + 3, palm.y + 4);
-    ctx.lineTo(palm.x, palm.y);
-    ctx.stroke();
-
-    // Fronds
-    ctx.save();
-    ctx.translate(palm.x, palm.y);
-    ctx.rotate(palm.phase + sway);
-    const count = palm.fronds || 6;
-    for (let f = 0; f < count; f++) {
-      const a = (f * Math.PI * 2) / count;
-      ctx.save();
-      ctx.rotate(a);
-      ctx.fillStyle = f % 2 === 0 ? '#2f9e59' : '#45bf6c';
-      ctx.beginPath();
-      ctx.moveTo(0, 0);
-      ctx.quadraticCurveTo(palm.r * 0.52, -palm.r * 0.28, palm.r, 0);
-      ctx.quadraticCurveTo(palm.r * 0.52, palm.r * 0.24, 0, 0);
-      ctx.fill();
-      ctx.restore();
-    }
-
-    // Center crown
-    ctx.fillStyle = '#6f4e37';
-    ctx.beginPath();
-    ctx.arc(0, 0, 3.2, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-  }
-}
-
-function drawCombatEffects(ctx, state) {
-  const projectiles = state?.bullets || state?.projectiles || [];
-  for (let i = 0; i < projectiles.length; i++) {
-    const b = projectiles[i];
-    const angle = b.angle ?? Math.atan2(b.vy || 0, b.vx || 1);
-    ctx.save();
-    ctx.translate(b.x, b.y);
-    ctx.rotate(angle);
-    ctx.strokeStyle = '#fff199';
-    ctx.lineWidth = 2.5;
-    ctx.beginPath();
-    ctx.moveTo(-10, 0);
-    ctx.lineTo(4, 0);
-    ctx.stroke();
-    ctx.restore();
-  }
-
-  const effects = state?.effects || state?.particles || [];
-  for (let i = 0; i < effects.length; i++) {
-    const e = effects[i];
-    ctx.save();
-    ctx.globalAlpha = clamp(e.alpha ?? 0.85, 0, 1);
-    ctx.fillStyle = e.color || '#ffb703';
-    ctx.beginPath();
-    ctx.arc(e.x, e.y, e.r || e.radius || 5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-  }
-
-  const skids = state?.skids || [];
-  if (skids.length > 0) {
-    ctx.save();
-    ctx.strokeStyle = 'rgba(22, 26, 34, 0.34)';
-    ctx.lineWidth = 3;
-    for (let i = 0; i < skids.length; i++) {
-      const s = skids[i];
-      ctx.beginPath();
-      ctx.moveTo(s.x1, s.y1);
-      ctx.lineTo(s.x2, s.y2);
-      ctx.stroke();
-    }
-    ctx.restore();
-  }
-}
-
-function drawOffscreenTargetIndicator(ctx, state, camX, camY, viewW, viewH) {
-  const mission = state?.mission;
+function drawMissionMarker(ctx, mission, cam, viewW, viewH, time) {
   if (!mission || mission.done || !mission.target) return;
   const tx = mission.target.x;
   const ty = mission.target.y;
-  if (typeof tx !== 'number' || typeof ty !== 'number') return;
+  if (!Number.isFinite(tx) || !Number.isFinite(ty)) return;
 
-  const sx = tx - camX;
-  const sy = ty - camY;
+  const pulse = (time * 1.3) % 1;
+  const onScreen =
+    tx >= cam.x - 40 && tx <= cam.x + viewW + 40 && ty >= cam.y - 40 && ty <= cam.y + viewH + 40;
+
+  if (onScreen) {
+    ctx.save();
+    ctx.translate(tx, ty);
+
+    // Expanding pulse ring
+    ctx.strokeStyle = `rgba(255, 209, 102, ${1 - pulse})`;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(0, 0, 18 + pulse * 30, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Inner glowing pad
+    const grad = ctx.createRadialGradient(0, 0, 4, 0, 0, 26);
+    grad.addColorStop(0, 'rgba(255, 224, 115, 0.55)');
+    grad.addColorStop(0.6, 'rgba(255, 122, 89, 0.25)');
+    grad.addColorStop(1, 'rgba(255, 122, 89, 0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(0, 0, 26, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.strokeStyle = '#ffd166';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.arc(0, 0, 18, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Bouncing downward marker chevron
+    const bob = Math.sin(time * 5.5) * 5;
+    ctx.translate(0, -28 + bob);
+    ctx.fillStyle = '#ffd166';
+    ctx.strokeStyle = '#141e2e';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, 12);
+    ctx.lineTo(-9, -4);
+    ctx.lineTo(9, -4);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.restore();
+  }
+}
+
+function drawOffscreenTargetPointer(ctx, state, cam, viewW, viewH) {
+  const target = state?.mission && !state.mission.done ? state.mission.target : null;
+  if (!target || !Number.isFinite(target.x) || !Number.isFinite(target.y)) return;
+
+  const sx = target.x - cam.x;
+  const sy = target.y - cam.y;
   const pad = 42;
   if (sx >= pad && sx <= viewW - pad && sy >= pad && sy <= viewH - pad) return;
 
   const cx = viewW * 0.5;
   const cy = viewH * 0.5;
-  const angle = Math.atan2(sy - cy, sx - cx);
-  const dx = Math.cos(angle);
-  const dy = Math.sin(angle);
-  const halfW = viewW * 0.5 - pad;
-  const halfH = viewH * 0.5 - pad;
-  const scale = Math.min(
-    Math.abs(dx) > 0.001 ? halfW / Math.abs(dx) : Infinity,
-    Math.abs(dy) > 0.001 ? halfH / Math.abs(dy) : Infinity
-  );
-  const ix = cx + dx * scale;
-  const iy = cy + dy * scale;
+  const ang = Math.atan2(sy - cy, sx - cx);
+  const edgeX = clamp(sx, pad, viewW - pad);
+  const edgeY = clamp(sy, 86, viewH - pad);
 
-  const origin = state?.car || state?.player || { x: camX + cx, y: camY + cy };
-  const distM = Math.round(Math.hypot(tx - origin.x, ty - origin.y) / 4);
+  const distM = Math.round(Math.hypot(target.x - (cam.x + cx), target.y - (cam.y + cy)) / 8);
 
   ctx.save();
-  ctx.translate(ix, iy);
-
-  ctx.save();
-  ctx.rotate(angle);
-  ctx.fillStyle = '#ffd166';
-  ctx.strokeStyle = '#0f1d2e';
+  ctx.translate(edgeX, edgeY);
+  ctx.fillStyle = 'rgba(11, 24, 38, 0.85)';
+  ctx.strokeStyle = '#ffd166';
   ctx.lineWidth = 2;
   ctx.beginPath();
-  ctx.moveTo(13, 0);
-  ctx.lineTo(-9, -8);
-  ctx.lineTo(-5, 0);
-  ctx.lineTo(-9, 8);
-  ctx.closePath();
+  ctx.arc(0, 0, 18, 0, Math.PI * 2);
   ctx.fill();
   ctx.stroke();
+
+  ctx.save();
+  ctx.rotate(ang);
+  ctx.fillStyle = '#ffd166';
+  ctx.beginPath();
+  ctx.moveTo(11, 0);
+  ctx.lineTo(-6, -6);
+  ctx.lineTo(-3, 0);
+  ctx.lineTo(-6, 6);
+  ctx.closePath();
+  ctx.fill();
   ctx.restore();
 
-  ctx.fillStyle = 'rgba(10, 22, 36, 0.84)';
-  roundRectPath(ctx, -22, 13, 44, 17, 5);
-  ctx.fill();
-  ctx.fillStyle = '#ffd166';
-  ctx.font = '700 10px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+  ctx.font = '700 10px "Avenir Next", system-ui, sans-serif';
+  ctx.fillStyle = '#fff5d6';
   ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(`${distM}m`, 0, 21.5);
+  ctx.textBaseline = 'top';
+  ctx.fillText(`${distM}m`, 0, 21);
   ctx.restore();
 }
 
-function drawLightingOverlay(ctx, lighting, viewW, viewH) {
-  if (!lighting || lighting === 'day') return;
-  ctx.save();
-  if (lighting === 'dawn') {
-    const grad = ctx.createLinearGradient(0, 0, viewW, viewH);
-    grad.addColorStop(0, 'rgba(255, 148, 96, 0.20)');
-    grad.addColorStop(0.55, 'rgba(255, 206, 132, 0.10)');
-    grad.addColorStop(1, 'rgba(42, 72, 128, 0.18)');
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, viewW, viewH);
-  } else if (lighting === 'dusk') {
-    const grad = ctx.createLinearGradient(0, 0, viewW, viewH);
-    grad.addColorStop(0, 'rgba(255, 108, 92, 0.18)');
-    grad.addColorStop(0.5, 'rgba(102, 54, 128, 0.14)');
-    grad.addColorStop(1, 'rgba(16, 30, 62, 0.28)');
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, viewW, viewH);
+function drawCombatEffects(ctx, state) {
+  const bullets = state?.bullets || state?.projectiles;
+  if (Array.isArray(bullets)) {
+    ctx.save();
+    ctx.strokeStyle = '#fff2a6';
+    ctx.lineWidth = 2.5;
+    for (const b of bullets) {
+      if (!Number.isFinite(b.x) || !Number.isFinite(b.y)) continue;
+      const vx = b.vx ?? Math.cos(b.angle || 0) * 14;
+      const vy = b.vy ?? Math.sin(b.angle || 0) * 14;
+      const len = Math.hypot(vx, vy) || 1;
+      ctx.beginPath();
+      ctx.moveTo(b.x, b.y);
+      ctx.lineTo(b.x - (vx / len) * 14, b.y - (vy / len) * 14);
+      ctx.stroke();
+    }
+    ctx.restore();
   }
-  ctx.restore();
+
+  const effects = state?.effects || state?.particles;
+  if (Array.isArray(effects)) {
+    for (const ef of effects) {
+      if (!Number.isFinite(ef.x) || !Number.isFinite(ef.y)) continue;
+      ctx.save();
+      ctx.globalAlpha = clamp(ef.alpha ?? 0.8, 0, 1);
+      ctx.fillStyle = ef.color || '#ffb703';
+      ctx.beginPath();
+      ctx.arc(ef.x, ef.y, ef.r || ef.radius || 5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
 }
 
 export function render(ctx, state, camera) {
   if (!ctx) return;
   const viewW = ctx.canvas?.width || VIEW_W;
   const viewH = ctx.canvas?.height || VIEW_H;
-  const safeState = state || {};
-  const meta = getWorldMeta(safeState.world);
-  const time = Number(safeState.time) || 0;
-
-  const focus = (!safeState.player?.onFoot && safeState.car) ? safeState.car : (safeState.player || { x: meta.worldPxW * 0.5, y: meta.worldPxH * 0.5 });
-  const camX = typeof camera?.x === 'number'
-    ? camera.x
-    : clamp((focus.x || 0) - viewW * 0.5, 0, Math.max(0, meta.worldPxW - viewW));
-  const camY = typeof camera?.y === 'number'
-    ? camera.y
-    : clamp((focus.y || 0) - viewH * 0.5, 0, Math.max(0, meta.worldPxH - viewH));
-
-  // Clear background with deep ocean tone
-  ctx.fillStyle = '#1477a1';
-  ctx.fillRect(0, 0, viewW, viewH);
+  const time = state?.time || 0;
+  const world = state?.world;
+  const metrics = getWorldMetrics(world);
+  const cam = getCamera(state, camera, metrics, viewW, viewH);
+  const roadLines = getRoadLines(metrics, world);
+  const buildings = getBuildings(world, metrics);
 
   ctx.save();
-  ctx.translate(-Math.round(camX), -Math.round(camY));
+  ctx.clearRect(0, 0, viewW, viewH);
+  ctx.translate(-Math.round(cam.x), -Math.round(cam.y));
 
-  // 1. Roads & sidewalks
-  drawRoadsAndSidewalks(ctx, meta, camX, camY, viewW, viewH);
+  // 1. Ocean, city ground, parks, and southern beach strip
+  drawOceanAndBeach(ctx, metrics, cam, viewW, viewH, time, buildings);
 
-  // 2. Beach strip & ocean on south edge
-  drawBeachAndOcean(ctx, meta, camX, camY, viewW, viewH, time);
+  // 2. Road grid, curbs, dashed centerlines, crosswalks
+  drawRoads(ctx, metrics, roadLines, cam, viewW, viewH);
 
-  // 3. Skid marks / ground decals & mission beacon
-  drawMissionBeacon(ctx, safeState.mission, time);
+  // 3. Mission world beacon on the ground
+  drawMissionMarker(ctx, state?.mission, cam, viewW, viewH, time);
 
-  // 4. Buildings with soft shadows and coastal roofs
-  drawBuildings(ctx, meta, camX, camY, viewW, viewH);
-
-  // 5. Deduplicated vehicles (traffic, police, player car)
-  const drawnCars = new Set();
-  const policeList = Array.isArray(safeState.police) ? safeState.police : [];
-  const policeSet = new Set(policeList);
-  const carsList = Array.isArray(safeState.cars) ? safeState.cars : [];
-  const activeCar = (!safeState.player?.onFoot && safeState.car) ? safeState.car : null;
-  const wanted = Number(safeState.wanted) || 0;
-  const lighting = safeState.lighting || safeState.timeOfDay || 'day';
-
-  const drawVehicleIfVisible = (car, idx, forcePolice = false) => {
-    if (!car || drawnCars.has(car)) return;
-    drawnCars.add(car);
-    if (
-      car.x < camX - 80 ||
-      car.x > camX + viewW + 80 ||
-      car.y < camY - 80 ||
-      car.y > camY + viewH + 80
-    ) {
-      return;
-    }
-    const isPolice =
-      forcePolice ||
-      policeSet.has(car) ||
-      Boolean(car.isPolice) ||
-      car.type === 'police' ||
-      car.model === 'police';
-    drawCar(ctx, car, {
-      isPolice,
-      isPlayerCar: car === activeCar,
-      time,
-      lighting,
-      wanted,
-      index: idx,
-    });
-  };
-
-  for (let i = 0; i < carsList.length; i++) {
-    drawVehicleIfVisible(carsList[i], i, false);
-  }
-  for (let i = 0; i < policeList.length; i++) {
-    drawVehicleIfVisible(policeList[i], i + 100, true);
-  }
-  if (activeCar) {
-    drawVehicleIfVisible(activeCar, 999, false);
-  }
-
-  // 6. Pedestrians
-  const peds = Array.isArray(safeState.peds) ? safeState.peds : [];
+  // 4. Pedestrians
+  const peds = Array.isArray(state?.peds) ? state.peds : [];
   for (let i = 0; i < peds.length; i++) {
-    const ped = peds[i];
-    if (!ped) continue;
-    if (ped.x < camX - 30 || ped.x > camX + viewW + 30 || ped.y < camY - 30 || ped.y > camY + viewH + 30) {
+    const p = peds[i];
+    if (!p || p.x < cam.x - 40 || p.x > cam.x + viewW + 40 || p.y < cam.y - 40 || p.y > cam.y + viewH + 40) {
       continue;
     }
-    drawPed(ctx, ped, i, time);
+    drawPed(ctx, p, i, time);
   }
 
-  // 7. Player on foot
-  if (safeState.player && (safeState.player.onFoot || !safeState.car)) {
-    drawPlayerOnFoot(ctx, safeState.player, time);
+  // 5. Traffic & parked cars (avoid duplicating player's car or police cars)
+  const playerCar = state?.car && !state?.player?.onFoot ? state.car : null;
+  const policeList = Array.isArray(state?.police) ? state.police : [];
+  const policeSet = new Set(policeList);
+  const cars = Array.isArray(state?.cars) ? state.cars : [];
+
+  for (let i = 0; i < cars.length; i++) {
+    const c = cars[i];
+    if (!c || c === playerCar || policeSet.has(c)) continue;
+    if (c.x < cam.x - 70 || c.x > cam.x + viewW + 70 || c.y < cam.y - 70 || c.y > cam.y + viewH + 70) {
+      continue;
+    }
+    drawVehicle(ctx, c, { isPolice: Boolean(c.isPolice), isPlayerCar: false, time });
   }
 
-  // 8. Combat tracers & effects
-  drawCombatEffects(ctx, safeState);
+  // 6. Player (either driving car or on foot)
+  if (playerCar) {
+    drawVehicle(ctx, playerCar, { isPolice: false, isPlayerCar: true, time });
+  } else if (state?.player) {
+    drawPlayerOnFoot(ctx, state.player, time);
+  }
 
-  // 9. Palm tree canopy layer (for natural top-down depth)
-  drawPalmTrees(ctx, meta, camX, camY, viewW, viewH, time);
+  // 7. Police units
+  for (let i = 0; i < policeList.length; i++) {
+    const cop = policeList[i];
+    if (!cop) continue;
+    if (cop.x < cam.x - 80 || cop.x > cam.x + viewW + 80 || cop.y < cam.y - 80 || cop.y > cam.y + viewH + 80) {
+      continue;
+    }
+    if (cop.onFoot) {
+      drawPed(ctx, { ...cop, color: '#1b3b6f' }, i + 40, time);
+    } else {
+      drawVehicle(ctx, cop, { isPolice: true, isPlayerCar: false, time });
+    }
+  }
+
+  // 8. Combat tracers / effects
+  drawCombatEffects(ctx, state);
+
+  // 9. Buildings & roofs (drawn over ground/sidewalks for crisp architectural depth)
+  drawBuildings(ctx, buildings, cam, viewW, viewH);
+
+  // 10. Palm tree canopies swaying overhead
+  drawPalmTrees(ctx, metrics, roadLines, buildings, cam, viewW, viewH, time);
 
   ctx.restore();
 
-  // 10. Optional dawn/dusk lighting wash
-  drawLightingOverlay(ctx, lighting, viewW, viewH);
-
-  // 11. Off-screen mission target directional pointer
-  drawOffscreenTargetIndicator(ctx, safeState, camX, camY, viewW, viewH);
+  // Screen-space offscreen mission directional indicator
+  drawOffscreenTargetPointer(ctx, state, cam, viewW, viewH);
 }
 
-function drawStar(ctx, cx, cy, outerR, innerR) {
+function drawStar(ctx, cx, cy, outerR, innerR, filled, glowColor) {
+  ctx.save();
   ctx.beginPath();
   for (let i = 0; i < 10; i++) {
     const r = i % 2 === 0 ? outerR : innerR;
     const a = -Math.PI * 0.5 + (i * Math.PI) / 5;
-    const x = cx + Math.cos(a) * r;
-    const y = cy + Math.sin(a) * r;
-    if (i === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
+    const sx = cx + Math.cos(a) * r;
+    const sy = cy + Math.sin(a) * r;
+    if (i === 0) ctx.moveTo(sx, sy);
+    else ctx.lineTo(sx, sy);
   }
   ctx.closePath();
+
+  if (filled) {
+    if (glowColor) {
+      ctx.shadowColor = glowColor;
+      ctx.shadowBlur = 10;
+    }
+    ctx.fillStyle = '#ffd166';
+    ctx.fill();
+    ctx.strokeStyle = '#ff8811';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+  } else {
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.28)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+  ctx.restore();
 }
 
 export function drawHUD(ctx, state) {
-  if (!ctx) return;
+  if (!ctx || !state) return;
   const viewW = ctx.canvas?.width || VIEW_W;
   const viewH = ctx.canvas?.height || VIEW_H;
-  const safeState = state || {};
-  const player = safeState.player || { health: 100, money: 0, onFoot: true, speed: 0 };
-  const health = clamp(Number(player.health ?? 100), 0, 100);
-  const money = Math.round(Number(player.money ?? 0));
-  const score = Math.round(Number(safeState.score ?? 0));
-  const wanted = clamp(Math.round(Number(safeState.wanted ?? 0)), 0, 5);
-  const time = Number(safeState.time) || 0;
-  const driving = !player.onFoot && Boolean(safeState.car);
+  const time = state.time || 0;
+  const player = state.player || {};
+  const health = clamp(Math.round(player.health ?? 100), 0, 100);
+  const money = Math.round(player.money ?? 0);
+  const wanted = clamp(Math.round(state.wanted ?? 0), 0, 5);
+  const score = Math.round(state.score ?? 0);
+  const driving = Boolean(state.car && !player.onFoot);
 
   ctx.save();
-  ctx.textBaseline = 'middle';
 
-  // --- TOP-LEFT: Player Health, Money, Score ---
+  // --- 1. TOP-LEFT STATUS CARD (Cash, Health, Wanted Stars) ---
   const cardX = 18;
   const cardY = 16;
-  const cardW = 264;
-  const cardH = 82;
+  const cardW = 248;
+  const cardH = 112;
 
-  ctx.fillStyle = 'rgba(10, 22, 36, 0.80)';
+  ctx.fillStyle = 'rgba(9, 21, 35, 0.82)';
   roundRectPath(ctx, cardX, cardY, cardW, cardH, 12);
   ctx.fill();
-  ctx.strokeStyle = 'rgba(110, 224, 232, 0.30)';
-  ctx.lineWidth = 1.25;
+  ctx.strokeStyle = wanted >= 3
+    ? (Math.floor(time * 6) % 2 === 0 ? 'rgba(255, 68, 96, 0.72)' : 'rgba(56, 152, 255, 0.72)')
+    : 'rgba(114, 224, 232, 0.28)';
+  ctx.lineWidth = 1.5;
   ctx.stroke();
 
-  // Name & Mode tag
-  ctx.fillStyle = '#8ecae6';
-  ctx.font = '800 11px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+  // Player badge + Money
+  ctx.fillStyle = '#36d6cf';
+  ctx.font = '800 11px "Avenir Next", system-ui, sans-serif';
   ctx.textAlign = 'left';
-  ctx.fillText((PLAYER_NAME || 'REX').toUpperCase(), cardX + 14, cardY + 18);
+  ctx.textBaseline = 'top';
+  ctx.fillText(PLAYER_NAME.toUpperCase(), cardX + 14, cardY + 12);
 
-  ctx.fillStyle = driving ? '#ffd166' : '#5be3d8';
+  ctx.fillStyle = '#4ef0a3';
+  ctx.font = '900 24px "Avenir Next", system-ui, sans-serif';
   ctx.textAlign = 'right';
-  ctx.fillText(driving ? 'IN VEHICLE' : 'ON FOOT', cardX + cardW - 14, cardY + 18);
+  ctx.fillText('$' + money.toLocaleString('en-US'), cardX + cardW - 14, cardY + 8);
 
-  // Health bar
-  const barX = cardX + 14;
-  const barY = cardY + 30;
-  const barW = cardW - 70;
-  const barH = 14;
-
+  // Health Bar
+  const hbX = cardX + 14;
+  const hbY = cardY + 43;
+  const hbW = cardW - 28;
+  const hbH = 14;
   ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
-  roundRectPath(ctx, barX, barY, barW, barH, 7);
+  roundRectPath(ctx, hbX, hbY, hbW, hbH, 7);
   ctx.fill();
 
-  const fillW = Math.max(0, (barW * health) / 100);
-  if (fillW > 0) {
-    const hpColor = health > 55 ? '#4ce09e' : health > 25 ? '#ffd166' : '#ff595e';
-    ctx.fillStyle = hpColor;
-    roundRectPath(ctx, barX, barY, fillW, barH, 7);
+  const hpFrac = health / 100;
+  const hpGrad = ctx.createLinearGradient(hbX, 0, hbX + hbW, 0);
+  if (hpFrac > 0.5) {
+    hpGrad.addColorStop(0, '#2ee68a');
+    hpGrad.addColorStop(1, '#36d6cf');
+  } else if (hpFrac > 0.25) {
+    hpGrad.addColorStop(0, '#ffb703');
+    hpGrad.addColorStop(1, '#fb8500');
+  } else {
+    hpGrad.addColorStop(0, '#ff4d6d');
+    hpGrad.addColorStop(1, '#e63946');
+  }
+  if (hpFrac > 0) {
+    ctx.fillStyle = hpGrad;
+    roundRectPath(ctx, hbX, hbY, Math.max(10, hbW * hpFrac), hbH, 7);
     ctx.fill();
   }
 
-  ctx.fillStyle = '#ffffff';
-  ctx.font = '800 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-  ctx.textAlign = 'right';
-  ctx.fillText(`${Math.round(health)} HP`, cardX + cardW - 14, barY + barH * 0.5 + 0.5);
-
-  // Money & Score row
-  ctx.fillStyle = '#5ef2a8';
-  ctx.font = '900 20px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+  ctx.fillStyle = '#091523';
+  ctx.font = '800 10px "Avenir Next", system-ui, sans-serif';
   ctx.textAlign = 'left';
-  ctx.fillText(`$${money.toLocaleString('en-US')}`, cardX + 14, cardY + 63);
+  ctx.textBaseline = 'middle';
+  ctx.fillText(`HP ${health}`, hbX + 7, hbY + hbH * 0.5 + 0.5);
 
-  ctx.fillStyle = '#b9d6e6';
-  ctx.font = '700 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-  ctx.textAlign = 'right';
-  ctx.fillText(`SCORE ${score.toLocaleString('en-US')}`, cardX + cardW - 14, cardY + 64);
-
-  // --- TOP-CENTER: Wanted Stars (0..5) ---
-  const starBoxW = 192;
-  const starBoxH = 40;
-  const starBoxX = (viewW - starBoxW) * 0.5;
-  const starBoxY = 16;
-
-  ctx.fillStyle = 'rgba(10, 22, 36, 0.78)';
-  roundRectPath(ctx, starBoxX, starBoxY, starBoxW, starBoxH, 20);
-  ctx.fill();
-
-  const flashPhase = Math.floor(time * 6) % 2;
-  ctx.strokeStyle =
-    wanted > 0
-      ? flashPhase === 0
-        ? 'rgba(255, 70, 90, 0.85)'
-        : 'rgba(56, 176, 255, 0.85)'
-      : 'rgba(110, 224, 232, 0.25)';
-  ctx.lineWidth = wanted > 0 ? 1.8 : 1.2;
-  ctx.stroke();
-
+  // Wanted Stars (0..5)
+  const starY = cardY + 80;
+  const sirenGlow = wanted > 0
+    ? (Math.floor(time * 7) % 2 === 0 ? 'rgba(255, 70, 90, 0.9)' : 'rgba(54, 156, 255, 0.9)')
+    : null;
   for (let i = 0; i < 5; i++) {
-    const sx = starBoxX + 30 + i * 33;
-    const sy = starBoxY + starBoxH * 0.5;
-    const active = i < wanted;
-    drawStar(ctx, sx, sy, 11.5, 5.2);
-    if (active) {
-      ctx.fillStyle = '#ffd166';
-      ctx.fill();
-      ctx.strokeStyle = '#ff7a59';
-      ctx.lineWidth = 1.4;
-      ctx.stroke();
-    } else {
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(190, 220, 236, 0.26)';
-      ctx.lineWidth = 1;
-      ctx.stroke();
-    }
+    drawStar(ctx, cardX + 26 + i * 25, starY, 9.5, 4.4, i < wanted, sirenGlow);
   }
 
-  // --- BOTTOM-LEFT: Current Mission Objective ---
-  const mission = safeState.mission;
-  const objX = 18;
-  const objW = 420;
-  const objH = 70;
-  const objY = viewH - objH - 18;
-
-  ctx.fillStyle = 'rgba(10, 22, 36, 0.82)';
-  roundRectPath(ctx, objX, objY, objW, objH, 12);
+  // Weapon / Mode badge
+  const modeLabel = driving
+    ? 'DRIVING'
+    : (player.weapon ? String(player.weapon).toUpperCase() : 'ON FOOT');
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
+  roundRectPath(ctx, cardX + cardW - 86, starY - 10, 72, 20, 6);
   ctx.fill();
-  ctx.strokeStyle = mission && !mission.done ? 'rgba(255, 209, 102, 0.52)' : 'rgba(110, 224, 232, 0.26)';
-  ctx.lineWidth = 1.3;
+  ctx.fillStyle = '#d4eaf5';
+  ctx.font = '700 10px "Avenir Next", system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(modeLabel.slice(0, 9), cardX + cardW - 50, starY + 0.5);
+
+  // --- 2. TOP-CENTER MISSION BANNER ---
+  const m = state.mission;
+  const bannerW = 470;
+  const bannerH = m && !m.done ? 58 : 40;
+  const bannerX = (viewW - bannerW) * 0.5;
+  const bannerY = 16;
+
+  ctx.fillStyle = 'rgba(9, 21, 35, 0.82)';
+  roundRectPath(ctx, bannerX, bannerY, bannerW, bannerH, 12);
+  ctx.fill();
+  ctx.strokeStyle = m && !m.done ? 'rgba(255, 209, 102, 0.45)' : 'rgba(114, 224, 232, 0.22)';
+  ctx.lineWidth = 1.4;
   ctx.stroke();
 
-  // Accent left bar
-  ctx.fillStyle = mission && !mission.done ? '#ffd166' : '#5be3d8';
-  roundRectPath(ctx, objX + 6, objY + 10, 4, objH - 20, 2);
+  if (m && !m.done) {
+    ctx.fillStyle = '#ffd166';
+    ctx.font = '800 11px "Avenir Next", system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    const header = m.name ? `MISSION · ${String(m.name).toUpperCase()}` : 'ACTIVE MISSION';
+    ctx.fillText(header, viewW * 0.5, bannerY + 9);
+
+    ctx.fillStyle = '#f4f9fc';
+    ctx.font = '600 15px "Avenir Next", system-ui, sans-serif';
+    ctx.fillText(m.objective || 'Follow the golden marker on your radar.', viewW * 0.5, bannerY + 27);
+  } else {
+    ctx.fillStyle = '#9fd3e6';
+    ctx.font = '700 13px "Avenir Next", system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`FREE ROAM · ${CITY_NAME.toUpperCase()} — Press [M] for Missions`, viewW * 0.5, bannerY + bannerH * 0.5);
+  }
+
+  // --- 3. BOTTOM-LEFT DISTRICT & SCORE PILL ---
+  const focus = driving ? state.car : player;
+  const district = getDistrictName(focus?.x ?? 1280, focus?.y ?? 1280);
+  const pillW = 240;
+  const pillH = 38;
+  const pillX = 18;
+  const pillY = viewH - pillH - 16;
+
+  ctx.fillStyle = 'rgba(9, 21, 35, 0.78)';
+  roundRectPath(ctx, pillX, pillY, pillW, pillH, 10);
   ctx.fill();
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.14)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
 
-  const missionTitle = mission && !mission.done
-    ? `MISSION · ${(mission.name || 'ACTIVE JOB').toUpperCase()}`
-    : 'FREE ROAM · MARLIN BAY';
-  const missionText = mission && !mission.done
-    ? mission.objective || 'Follow the gold marker on your minimap.'
-    : 'Press M to choose a mission, or press E to grab a ride.';
-
-  ctx.fillStyle = mission && !mission.done ? '#ffd166' : '#5be3d8';
-  ctx.font = '800 11px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+  ctx.fillStyle = '#ffd166';
+  ctx.font = '800 11px "Avenir Next", system-ui, sans-serif';
   ctx.textAlign = 'left';
-  ctx.fillText(missionTitle, objX + 20, objY + 23);
+  ctx.textBaseline = 'middle';
+  ctx.fillText(district, pillX + 12, pillY + pillH * 0.5);
 
-  ctx.fillStyle = '#eef6fa';
-  ctx.font = '600 14px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-  const clipped = missionText.length > 52 ? `${missionText.slice(0, 49)}...` : missionText;
-  ctx.fillText(clipped, objX + 20, objY + 46);
+  ctx.fillStyle = '#d8eef8';
+  ctx.font = '700 12px "Avenir Next", system-ui, sans-serif';
+  ctx.textAlign = 'right';
+  ctx.fillText(`SCORE ${score.toLocaleString('en-US')}`, pillX + pillW - 12, pillY + pillH * 0.5);
 
-  // --- BOTTOM-RIGHT: Speedometer when driving (or subtle action hint on foot) ---
-  if (driving) {
-    const rawSpeed = Math.abs(Number(safeState.car?.speed ?? player.speed ?? 0));
-    const mph = Math.round(rawSpeed * 0.28);
-    const maxMph = 120;
-    const ratio = clamp(mph / maxMph, 0, 1);
+  // --- 4. BOTTOM-RIGHT SPEEDOMETER (when driving) ---
+  if (driving && state.car) {
+    const rawSpeed = Math.abs(state.car.speed ?? player.speed ?? 0);
+    // Convert px/s to readable arcade MPH (e.g. 300 px/s ≈ 72 MPH)
+    const mph = Math.round(rawSpeed * 0.24);
+    const speedFrac = clamp(mph / 120, 0, 1);
 
-    const spW = 166;
-    const spH = 84;
+    const spW = 184;
+    const spH = 88;
     const spX = viewW - spW - 18;
-    const spY = viewH - spH - 18;
+    const spY = viewH - spH - 16;
 
-    ctx.fillStyle = 'rgba(10, 22, 36, 0.82)';
+    ctx.fillStyle = 'rgba(9, 21, 35, 0.84)';
     roundRectPath(ctx, spX, spY, spW, spH, 12);
     ctx.fill();
-    ctx.strokeStyle = 'rgba(110, 224, 232, 0.32)';
-    ctx.lineWidth = 1.25;
+    ctx.strokeStyle = 'rgba(54, 214, 207, 0.34)';
+    ctx.lineWidth = 1.4;
     ctx.stroke();
 
-    // Gauge arc
-    const gx = spX + spW * 0.5;
-    const gy = spY + 62;
-    const gr = 44;
-    ctx.lineWidth = 7;
+    // Semicircular gauge on left of widget
+    const gx = spX + 48;
+    const gy = spY + 56;
+    const gr = 30;
+    ctx.lineWidth = 6;
     ctx.lineCap = 'round';
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.14)';
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
     ctx.beginPath();
-    ctx.arc(gx, gy, gr, Math.PI, Math.PI * 2);
+    ctx.arc(gx, gy, gr, Math.PI * 0.85, Math.PI * 2.15);
     ctx.stroke();
 
-    const gaugeColor = ratio > 0.78 ? '#ff595e' : ratio > 0.48 ? '#ffd166' : '#5be3d8';
-    ctx.strokeStyle = gaugeColor;
+    const arcEnd = Math.PI * 0.85 + speedFrac * (Math.PI * 1.3);
+    ctx.strokeStyle = speedFrac > 0.72 ? '#ff5964' : speedFrac > 0.42 ? '#ffd166' : '#36d6cf';
     ctx.beginPath();
-    ctx.arc(gx, gy, gr, Math.PI, Math.PI + Math.PI * ratio);
+    ctx.arc(gx, gy, gr, Math.PI * 0.85, arcEnd);
     ctx.stroke();
 
+    // Digital MPH readout
     ctx.fillStyle = '#ffffff';
-    ctx.font = '900 26px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    ctx.font = '900 28px "Avenir Next", system-ui, sans-serif';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'top';
+    ctx.fillText(String(mph), spX + spW - 14, spY + 12);
+
+    ctx.fillStyle = '#79e6e0';
+    ctx.font = '800 11px "Avenir Next", system-ui, sans-serif';
+    ctx.fillText('MPH', spX + spW - 14, spY + 44);
+
+    const carModel = (state.car.model || 'COASTAL GT').toUpperCase();
+    ctx.fillStyle = '#9ec1d3';
+    ctx.font = '700 10px "Avenir Next", system-ui, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText(String(mph), gx, spY + 50);
-
-    ctx.fillStyle = '#8ecae6';
-    ctx.font = '800 10px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-    ctx.fillText('MPH', gx, spY + 70);
-  } else {
-    const hintW = 210;
-    const hintH = 38;
-    const hintX = viewW - hintW - 18;
-    const hintY = viewH - hintH - 18;
-
-    ctx.fillStyle = 'rgba(10, 22, 36, 0.74)';
-    roundRectPath(ctx, hintX, hintY, hintW, hintH, 10);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(110, 224, 232, 0.24)';
-    ctx.lineWidth = 1;
-    ctx.stroke();
-
-    ctx.fillStyle = '#cfe6f2';
-    ctx.font = '700 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('[E] Enter Car   [F] Attack', hintX + hintW * 0.5, hintY + hintH * 0.5 + 0.5);
+    ctx.fillText(`${carModel.slice(0, 14)} · [E] EXIT`, spX + spW * 0.5, spY + 69);
   }
 
   ctx.restore();
 }
 
 export function drawMinimap(ctx, state) {
-  if (!ctx) return;
+  if (!ctx || !state) return;
   const viewW = ctx.canvas?.width || VIEW_W;
-  const safeState = state || {};
-  const meta = getWorldMeta(safeState.world);
-  const time = Number(safeState.time) || 0;
+  const time = state.time || 0;
+  const world = state.world;
+  const metrics = getWorldMetrics(world);
+  const roadLines = getRoadLines(metrics, world);
+  const buildings = getBuildings(world, metrics);
 
-  const mapW = 200;
+  const mapW = 204;
   const mapH = 160;
   const mapX = viewW - mapW - 18;
   const mapY = 16;
 
+  const focus = state.car && !state.player?.onFoot ? state.car : state.player || { x: metrics.wPx * 0.5, y: metrics.hPx * 0.5 };
+
+  // Radar zoom shows ~1900x1500 world px around player, clamped inside world bounds
+  const scale = 0.095;
+  const visW = mapW / scale;
+  const visH = mapH / scale;
+  const originX = clamp((focus.x || 0) - visW * 0.5, 0, Math.max(0, metrics.wPx - visW));
+  const originY = clamp((focus.y || 0) - visH * 0.5, 0, Math.max(0, metrics.hPx - visH));
+
+  const toMX = (wx) => mapX + (wx - originX) * scale;
+  const toMY = (wy) => mapY + (wy - originY) * scale;
+
   ctx.save();
 
-  // Outer panel shadow & frame
-  ctx.fillStyle = 'rgba(8, 18, 30, 0.88)';
-  roundRectPath(ctx, mapX - 4, mapY - 4, mapW + 8, mapH + 22, 12);
+  // Outer shadow & frame
+  ctx.fillStyle = 'rgba(7, 17, 29, 0.88)';
+  roundRectPath(ctx, mapX - 3, mapY - 3, mapW + 6, mapH + 6, 13);
   ctx.fill();
-  ctx.strokeStyle = 'rgba(110, 224, 232, 0.42)';
-  ctx.lineWidth = 1.4;
-  ctx.stroke();
 
-  // Clip map viewport
+  // Clip interior of minimap
+  roundRectPath(ctx, mapX, mapY, mapW, mapH, 10);
   ctx.save();
-  roundRectPath(ctx, mapX, mapY, mapW, mapH, 8);
   ctx.clip();
 
-  // Map land base
-  ctx.fillStyle = '#1b3449';
+  // City ground fill
+  ctx.fillStyle = '#203447';
   ctx.fillRect(mapX, mapY, mapW, mapH);
 
-  const sx = mapW / meta.worldPxW;
-  const sy = mapH / meta.worldPxH;
-  const tileW = meta.tileSize * sx;
-  const tileH = meta.tileSize * sy;
+  // Beach & ocean strip on south edge
+  const beachY = toMY(BEACH_TILE_Y * metrics.ts);
+  const shoreY = toMY(metrics.hPx - 70);
+  if (beachY < mapY + mapH) {
+    ctx.fillStyle = '#c8ae74';
+    ctx.fillRect(mapX, beachY, mapW, Math.max(0, shoreY - beachY));
+    ctx.fillStyle = '#148da8';
+    ctx.fillRect(mapX, shoreY, mapW, mapY + mapH - shoreY + 4);
+  }
 
-  // Beach & ocean on south edge of minimap
-  const beachMapY = mapY + meta.beachStartY * sy;
-  ctx.fillStyle = '#d9be7a';
-  ctx.fillRect(mapX, beachMapY, mapW, (meta.worldPxH - meta.beachStartY) * sy * 0.48);
-  ctx.fillStyle = '#1ca0be';
-  ctx.fillRect(
-    mapX,
-    beachMapY + (meta.worldPxH - meta.beachStartY) * sy * 0.48,
-    mapW,
-    mapH - (beachMapY - mapY)
-  );
-
-  // Buildings footprint tint
-  ctx.fillStyle = 'rgba(130, 178, 200, 0.25)';
-  for (let i = 0; i < meta.buildings.length; i++) {
-    const b = meta.buildings[i];
-    ctx.fillRect(mapX + b.x * sx, mapY + b.y * sy, Math.max(1.5, b.w * sx), Math.max(1.5, b.h * sy));
+  // Building footprints
+  ctx.fillStyle = 'rgba(130, 165, 190, 0.34)';
+  for (let i = 0; i < buildings.length; i++) {
+    const b = buildings[i];
+    const bx = toMX(b.x);
+    const by = toMY(b.y);
+    const bw = b.w * scale;
+    const bh = b.h * scale;
+    if (bx + bw < mapX || bx > mapX + mapW || by + bh < mapY || by > mapY + mapH) continue;
+    ctx.fillRect(bx, by, Math.max(1.5, bw), Math.max(1.5, bh));
   }
 
   // Road grid
-  ctx.fillStyle = '#7c96aa';
-  for (let ty = 0; ty < meta.tilesY; ty++) {
-    for (let tx = 0; tx < meta.tilesX; tx++) {
-      if (meta.roadMask[ty * meta.tilesX + tx]) {
-        ctx.fillRect(mapX + tx * tileW, mapY + ty * tileH, tileW + 0.6, tileH + 0.6);
-      }
+  const ts = metrics.ts;
+  const roadPx = Math.max(3, ts * scale);
+  const maxRoadMY = toMY(BEACH_TILE_Y * ts);
+  ctx.fillStyle = '#53687e';
+  for (const c of roadLines.vCols) {
+    const rx = toMX(c * ts);
+    if (rx + roadPx < mapX || rx > mapX + mapW) continue;
+    ctx.fillRect(rx, mapY, roadPx, Math.max(0, maxRoadMY - mapY));
+  }
+  for (const r of roadLines.hRows) {
+    const ry = toMY(r * ts);
+    if (ry + roadPx < mapY || ry > mapY + mapH) continue;
+    ctx.fillRect(mapX, ry, mapW, roadPx);
+  }
+
+  // Ambient traffic cars (subtle pips)
+  if (Array.isArray(state.cars)) {
+    ctx.fillStyle = 'rgba(220, 238, 250, 0.45)';
+    for (let i = 0; i < state.cars.length; i++) {
+      const c = state.cars[i];
+      if (!c) continue;
+      const cx = toMX(c.x);
+      const cy = toMY(c.y);
+      if (cx < mapX || cx > mapX + mapW || cy < mapY || cy > mapY + mapH) continue;
+      ctx.fillRect(cx - 1.5, cy - 1.5, 3, 3);
     }
   }
 
-  // Traffic cars (subtle dots)
-  const cars = Array.isArray(safeState.cars) ? safeState.cars : [];
-  ctx.fillStyle = 'rgba(220, 238, 248, 0.45)';
-  for (let i = 0; i < cars.length; i++) {
-    const c = cars[i];
-    if (!c) continue;
-    ctx.fillRect(mapX + c.x * sx - 1, mapY + c.y * sy - 1, 2.2, 2.2);
+  // Police flashing red/blue dots
+  if (Array.isArray(state.police)) {
+    const flashRed = Math.floor(time * 8) % 2 === 0;
+    for (let i = 0; i < state.police.length; i++) {
+      const cop = state.police[i];
+      if (!cop) continue;
+      const px = toMX(cop.x);
+      const py = toMY(cop.y);
+      if (px < mapX - 4 || px > mapX + mapW + 4 || py < mapY - 4 || py > mapY + mapH + 4) continue;
+      ctx.fillStyle = (i % 2 === 0 ? flashRed : !flashRed) ? '#ff3355' : '#2ea0ff';
+      ctx.beginPath();
+      ctx.arc(px, py, 4.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
   }
 
-  // Police dots (flashing red/blue)
-  const police = Array.isArray(safeState.police) ? safeState.police : [];
-  const pPhase = Math.floor(time * 8) % 2;
-  for (let i = 0; i < police.length; i++) {
-    const p = police[i];
-    if (!p) continue;
-    const px = mapX + p.x * sx;
-    const py = mapY + p.y * sy;
-    ctx.fillStyle = (i + pPhase) % 2 === 0 ? '#ff3b5c' : '#38b6ff';
-    ctx.beginPath();
-    ctx.arc(px, py, 3.6, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = 1;
-    ctx.stroke();
-  }
-
-  // Mission target marker
-  const target = safeState.mission && !safeState.mission.done ? safeState.mission.target : null;
-  if (target && typeof target.x === 'number' && typeof target.y === 'number') {
-    const mx = mapX + target.x * sx;
-    const my = mapY + target.y * sy;
-    const pulse = (Math.sin(time * 5) + 1) * 0.5;
-
-    ctx.strokeStyle = 'rgba(255, 209, 102, 0.85)';
+  // Mission target marker (clamped to minimap border if outside zoom window)
+  const target = state.mission && !state.mission.done ? state.mission.target : null;
+  if (target && Number.isFinite(target.x) && Number.isFinite(target.y)) {
+    const tx = clamp(toMX(target.x), mapX + 8, mapX + mapW - 8);
+    const ty = clamp(toMY(target.y), mapY + 8, mapY + mapH - 8);
+    const ring = 5 + ((time * 10) % 6);
+    ctx.strokeStyle = 'rgba(255, 209, 102, 0.78)';
     ctx.lineWidth = 1.6;
     ctx.beginPath();
-    ctx.arc(mx, my, 5.5 + pulse * 3, 0, Math.PI * 2);
+    ctx.arc(tx, ty, ring, 0, Math.PI * 2);
     ctx.stroke();
 
     ctx.fillStyle = '#ffd166';
     ctx.beginPath();
-    ctx.arc(mx, my, 4, 0, Math.PI * 2);
+    ctx.arc(tx, ty, 4.4, 0, Math.PI * 2);
     ctx.fill();
-    ctx.strokeStyle = '#0d1b2a';
-    ctx.lineWidth = 1;
+    ctx.strokeStyle = '#0e1726';
+    ctx.lineWidth = 1.2;
     ctx.stroke();
   }
 
-  // Player arrow
-  const actor = (!safeState.player?.onFoot && safeState.car) ? safeState.car : safeState.player;
-  if (actor && typeof actor.x === 'number' && typeof actor.y === 'number') {
-    const px = mapX + actor.x * sx;
-    const py = mapY + actor.y * sy;
-    ctx.save();
-    ctx.translate(px, py);
-    ctx.rotate(actor.angle || 0);
-    ctx.fillStyle = '#5be3d8';
-    ctx.strokeStyle = '#08131f';
-    ctx.lineWidth = 1.6;
-    ctx.beginPath();
-    ctx.moveTo(7.5, 0);
-    ctx.lineTo(-5.5, -5);
-    ctx.lineTo(-3, 0);
-    ctx.lineTo(-5.5, 5);
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
-    ctx.restore();
-  }
-
-  // Compass badge
-  ctx.fillStyle = 'rgba(8, 18, 30, 0.76)';
-  roundRectPath(ctx, mapX + mapW - 22, mapY + 6, 16, 16, 4);
+  // Player directional arrow
+  const plX = toMX(focus.x || 0);
+  const plY = toMY(focus.y || 0);
+  const plAng = focus.angle ?? state.player?.angle ?? 0;
+  ctx.save();
+  ctx.translate(plX, plY);
+  ctx.rotate(plAng);
+  ctx.fillStyle = '#36d6cf';
+  ctx.strokeStyle = '#071421';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(8, 0);
+  ctx.lineTo(-5.5, -5);
+  ctx.lineTo(-3, 0);
+  ctx.lineTo(-5.5, 5);
+  ctx.closePath();
   ctx.fill();
-  ctx.fillStyle = '#ffd166';
-  ctx.font = '800 10px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('N', mapX + mapW - 14, mapY + 14.5);
+  ctx.stroke();
+  ctx.restore();
 
   ctx.restore(); // end clip
 
-  // Footer strip under minimap
-  ctx.fillStyle = '#9ac4d9';
-  ctx.font = '800 10px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'middle';
-  ctx.fillText((CITY_NAME || 'MARLIN BAY').toUpperCase(), mapX + 4, mapY + mapH + 10);
+  // Crisp glass border
+  roundRectPath(ctx, mapX, mapY, mapW, mapH, 10);
+  ctx.strokeStyle = 'rgba(114, 224, 232, 0.45)';
+  ctx.lineWidth = 1.6;
+  ctx.stroke();
 
-  ctx.fillStyle = '#5be3d8';
-  ctx.textAlign = 'right';
-  ctx.fillText('GPS LIVE', mapX + mapW - 4, mapY + mapH + 10);
+  // Compass 'N' badge at top center of minimap
+  ctx.fillStyle = '#0a1829';
+  ctx.strokeStyle = 'rgba(114, 224, 232, 0.55)';
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.arc(mapX + mapW * 0.5, mapY, 9, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = '#ffd166';
+  ctx.font = '800 10px "Avenir Next", system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('N', mapX + mapW * 0.5, mapY + 0.5);
 
   ctx.restore();
 }

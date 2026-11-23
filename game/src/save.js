@@ -1,21 +1,21 @@
-const KEY = 'marlin-bay-save-v1';
+const key = 'marlin-bay-save-v1';
 
-function amount(value) {
+function nonnegative(value) {
   return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
 }
 
 function completed(ids) {
-  return [1, 2, 3].filter(id => Array.isArray(ids) && ids.includes(id));
+  return Array.isArray(ids) ? [...new Set(ids.filter(id => [1, 2, 3].includes(id)))] : [];
 }
 
 export function loadGame() {
   try {
-    const data = JSON.parse(globalThis.localStorage.getItem(KEY));
-    if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
+    const value = JSON.parse(globalThis.localStorage.getItem(key));
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
     return {
-      money: amount(data.money),
-      completedMissions: completed(data.completedMissions),
-      bestScore: amount(data.bestScore),
+      money: nonnegative(value.money),
+      completedMissions: completed(value.completedMissions),
+      bestScore: nonnegative(value.bestScore),
     };
   } catch {
     return null;
@@ -24,21 +24,23 @@ export function loadGame() {
 
 export function saveGame(state) {
   try {
-    const data = {
-      money: amount(state.player.money),
+    const previous = loadGame();
+    globalThis.localStorage.setItem(key, JSON.stringify({
+      money: nonnegative(state.player.money),
       completedMissions: completed(state.completedMissions),
-      bestScore: Math.max(amount(state.bestScore), amount(state.score), loadGame()?.bestScore ?? 0),
-    };
-    globalThis.localStorage.setItem(KEY, JSON.stringify(data));
+      bestScore: Math.max(nonnegative(state.score), nonnegative(state.bestScore), previous?.bestScore ?? 0),
+    }));
+    return true;
   } catch {
-    // Storage can disappear between reads and writes in private browsing.
+    return false;
   }
 }
 
 export function clearSave() {
   try {
-    globalThis.localStorage.removeItem(KEY);
+    globalThis.localStorage.removeItem(key);
+    return true;
   } catch {
-    // An unavailable store has no accessible save to clear.
+    return false;
   }
 }

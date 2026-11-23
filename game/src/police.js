@@ -1,206 +1,142 @@
-import { CAR_H, PLAYER_R, ROAD_EVERY, TILE, WORLD_TILES } from './config.js';
-import { isBlocked, isRoad } from './world.js';
+import { CAR_W, PLAYER_R, ROAD_EVERY, TILE, WORLD_PX } from './config.js';
+import { isBlocked } from './world.js';
 
-const LAST = WORLD_TILES - 1;
-const TILE_COUNT = WORLD_TILES * WORLD_TILES;
-const clampTile = value => Math.max(0, Math.min(LAST, value));
-const point = (x, y) => ({ x: (x + 0.5) * TILE, y: (y + 0.5) * TILE });
-const index = (x, y) => y * WORLD_TILES + x;
-const center = key => point(key % WORLD_TILES, Math.floor(key / WORLD_TILES));
+const block = TILE * ROAD_EVERY;
+const half = TILE / 2;
+const lastRoad = half + Math.floor((WORLD_PX - TILE) / block) * block;
+const clamp = (value, low, high) => Math.min(high, Math.max(low, value));
+const road = value => clamp(half + block * Math.round((value - half) / block), half, lastRoad);
+const gap = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 
-function closestRoad(x, y) {
-  const col = clampTile(Math.floor(x / TILE));
-  const row = clampTile(Math.floor(y / TILE));
-  const lastRoad = LAST - LAST % ROAD_EVERY;
-  const roadCol = Math.min(lastRoad, Math.round(col / ROAD_EVERY) * ROAD_EVERY);
-  const roadRow = Math.min(lastRoad, Math.round(row / ROAD_EVERY) * ROAD_EVERY);
-  return Math.abs(x - point(roadCol, row).x) < Math.abs(y - point(col, roadRow).y)
-    ? index(roadCol, row) : index(col, roadRow);
+export function addWanted(state, n) {
+  if (!Number.isFinite(n) || n <= 0) return;
+  const old = state.wanted;
+  state.wanted = clamp(old + Math.ceil(n), 0, 5);
+  state.unseenTime = 0;
+  const reported = state.car ?? state.player;
+  state.lastPoliceReport = { x: reported.x, y: reported.y };
+  if (state.wanted > old) (state.events ??= []).push('siren');
 }
 
-// Search the actual road cells at junctions so a pursuing unit can round a whole block.
-function roadRoute(world, from, to) {
-  const previous = new Int16Array(TILE_COUNT).fill(-1);
-  const queue = [from];
-  previous[from] = from;
-  for (let head = 0; head < queue.length && previous[to] === -1; head++) {
-    const key = queue[head];
-    const col = key % WORLD_TILES;
-    const row = Math.floor(key / WORLD_TILES);
-    for (const [x, y] of [[col + 1, row], [col - 1, row], [col, row + 1], [col, row - 1]]) {
-      if (x < 0 || y < 0 || x > LAST || y > LAST) continue;
-      const next = index(x, y);
-      if (previous[next] !== -1) continue;
-      const pos = point(x, y);
-      if (!isRoad(world, pos.x, pos.y)) continue;
-      previous[next] = key;
-      queue.push(next);
-    }
+function unit(x, y, angle, roadblock) {
+  return {
+    x, y, angle, roadblock, model: 'police', color: '#263e60',
+    speed: 0, ramCooldown: 0, down: 0, waypoint: null,
+  };
+}
+
+function dispatch(state, target) {
+  const x = road(target.x);
+  const y = road(target.y);
+  const gates = [
+    { x: half, y, angle: 0 }, { x: WORLD_PX - half, y, angle: Math.PI },
+    { x, y: half, angle: Math.PI / 2 }, { x, y: WORLD_PX - half, angle: -Math.PI / 2 },
+  ].sort((a, b) => gap(a, target) - gap(b, target));
+  const gate = gates[(state.dispatchCount || 0) % gates.length];
+  state.dispatchCount = (state.dispatchCount || 0) + 1;
+  state.police.push(unit(gate.x, gate.y, gate.angle, false));
+}
+
+function blockade(state, target) {
+  const angle = target.angle || 0;
+  const dx = Math.cos(angle);
+  const dy = Math.sin(angle);
+  const horizontal = Math.abs(dx) >= Math.abs(dy);
+  const x = road(target.x + dx * block * 1.4);
+  const y = road(target.y + dy * block * 1.4);
+  if (gap({ x, y }, target) < 100) return;
+  state.police.push(unit(x, y, horizontal ? Math.PI / 2 : 0, true));
+}
+
+function nextTurn(car, target) {
+  const x = road(car.x);
+  const y = road(car.y);
+  // A shared road allows a direct approach even between junctions.
+  if (Math.abs(car.y - y) < 1 && Math.abs(target.y - y) <= half) return { x: target.x, y };
+  if (Math.abs(car.x - x) < 1 && Math.abs(target.x - x) <= half) return { x, y: target.y };
+  if (Math.abs(car.x - x) > 1 || Math.abs(car.y - y) > 1) return { x, y };
+  const tx = road(target.x);
+  const ty = road(target.y);
+  if (Math.abs(tx - x) >= Math.abs(ty - y) && tx !== x) return { x: x + Math.sign(tx - x) * block, y };
+  if (ty !== y) return { x, y: y + Math.sign(ty - y) * block };
+  return { x, y };
+}
+
+function pursue(car, target, wanted, dt) {
+  if (!car.waypoint || gap(car, car.waypoint) < 1) car.waypoint = nextTurn(car, target);
+  const distance = gap(car, car.waypoint);
+  if (distance < 0.01) {
+    car.speed = 0;
+    return;
   }
-  if (previous[to] === -1) return [];
-  const path = [];
-  for (let key = to; key !== from; key = previous[key]) path.push(center(key));
-  path.push(center(from));
-  return path.reverse();
+  const step = Math.min(distance, (145 + wanted * 17) * dt);
+  car.speed = dt > 0 ? step / dt : 0;
+  car.angle = Math.atan2(car.waypoint.y - car.y, car.waypoint.x - car.x);
+  car.x += Math.cos(car.angle) * step;
+  car.y += Math.sin(car.angle) * step;
 }
 
-function clearLine(world, from, to, radius) {
-  const dx = to.x - from.x;
-  const dy = to.y - from.y;
-  const samples = Math.max(1, Math.ceil(Math.hypot(dx, dy) / 18));
-  for (let i = 1; i <= samples; i++) {
-    if (isBlocked(world, from.x + dx * i / samples, from.y + dy * i / samples, radius)) return false;
+function canSee(world, car, target, distance) {
+  if (distance > 310) return false;
+  if (!world) return true;
+  for (let d = TILE / 2; d < distance; d += TILE / 2) {
+    const ratio = d / distance;
+    if (isBlocked(world, car.x + (target.x - car.x) * ratio, car.y + (target.y - car.y) * ratio, 2)) return false;
   }
   return true;
 }
 
-function cruiser(pos, angle, roadblock, player) {
-  return {
-    ...pos, angle, speed: 0, color: '#253552', model: 'patrol', isPolice: true,
-    roadblock, route: [], destination: -1, ramCooldown: 0,
-    lastKnown: { x: player.x, y: player.y }, down: false,
-  };
-}
-
-function spawnPatrol(state) {
-  const p = state.player;
-  const lastRoad = LAST - LAST % ROAD_EVERY;
-  const nearestStreet = value => Math.max(0, Math.min(lastRoad, Math.round((value / TILE - 0.5) / ROAD_EVERY) * ROAD_EVERY));
-  const col = nearestStreet(p.x);
-  const row = nearestStreet(p.y);
-  const entries = [point(0, row), point(LAST, row), point(col, 0), point(col, LAST)];
-  entries.sort((a, b) => Math.hypot(a.x - p.x, a.y - p.y) - Math.hypot(b.x - p.x, b.y - p.y));
-  const entry = entries[state.dispatchCount % entries.length];
-  state.dispatchCount++;
-  state.police.push(cruiser(entry, Math.atan2(p.y - entry.y, p.x - entry.x), false, p));
-}
-
-function placeRoadblock(state) {
-  const p = state.player;
-  const heading = p.angle + (p.speed < 0 ? Math.PI : 0);
-  const key = closestRoad(p.x + Math.cos(heading) * 330, p.y + Math.sin(heading) * 330);
-  const pos = center(key);
-  // Wait for another approach if the driver is already against the edge of town.
-  if (Math.hypot(pos.x - p.x, pos.y - p.y) < TILE * 2) return;
-  const col = key % WORLD_TILES;
-  const row = Math.floor(key / WORLD_TILES);
-  const across = row % ROAD_EVERY === 0 && (col % ROAD_EVERY !== 0 || Math.abs(Math.cos(heading)) > 0.7);
-  state.police.push(cruiser(pos, across ? Math.PI / 2 : 0, true, p));
-}
-
-function pursue(state, unit, sees, dt) {
-  const target = unit.lastKnown;
-  let goal;
-  if (sees && clearLine(state.world, unit, target, CAR_H / 2)) {
-    goal = target;
-    unit.destination = -1;
-  } else {
-    const destination = closestRoad(target.x, target.y);
-    if (unit.destination !== destination) {
-      unit.route = roadRoute(state.world, closestRoad(unit.x, unit.y), destination);
-      unit.destination = destination;
-    }
-    while (unit.route.length && Math.hypot(unit.route[0].x - unit.x, unit.route[0].y - unit.y) < 5) {
-      unit.route.shift();
-    }
-    goal = unit.route[0];
-  }
-  if (!goal) {
-    unit.speed = 0;
-    return;
-  }
-  const dx = goal.x - unit.x;
-  const dy = goal.y - unit.y;
-  const distance = Math.hypot(dx, dy);
-  if (distance < 1) {
-    unit.speed = 0;
-    return;
-  }
-  const angle = Math.atan2(dy, dx);
-  const turn = Math.atan2(Math.sin(angle - unit.angle), Math.cos(angle - unit.angle));
-  unit.angle += Math.max(-5 * dt, Math.min(5 * dt, turn));
-  unit.speed = Math.min(unit.speed + 165 * dt, 130 + 14 * state.wanted);
-  const travel = Math.min(distance, unit.speed * dt) * Math.max(0, Math.cos(turn));
-  const x = unit.x + dx / distance * travel;
-  const y = unit.y + dy / distance * travel;
-  if (!isBlocked(state.world, x, y, CAR_H / 2)) {
-    unit.x = x;
-    unit.y = y;
-  } else {
-    unit.speed = 0;
-    unit.destination = -1;
-  }
-}
-
-export function addWanted(state, n) {
-  if (!Number.isFinite(n)) return;
-  const previous = state.wanted;
-  state.wanted = Math.max(0, Math.min(5, previous + Math.trunc(n)));
-  if (n > 0) {
-    state.unseenTime = 0;
-    if (state.wanted > previous) state.events.push('siren');
-  }
-}
-
 export function updatePolice(state, dt) {
-  state.policeSeesPlayer = false;
-  if (state.wanted <= 0) {
+  state.policeSeePlayer = false;
+  if (!state.wanted) {
     state.police.length = 0;
-    state.dispatchCount = 0;
     state.dispatchDelay = 0;
+    state.lastPoliceReport = null;
     return;
   }
-  state.dispatchCount ??= 0;
+  const target = state.car ?? state.player;
+  const reported = state.lastPoliceReport ??= { x: target.x, y: target.y };
   state.dispatchDelay = Math.max(0, (state.dispatchDelay || 0) - dt);
-  if (state.wanted < 3) {
-    const block = state.police.findIndex(unit => unit.roadblock);
-    if (block !== -1) state.police.splice(block, 1);
+  if (!state.dispatchDelay && state.police.filter(car => !car.roadblock).length < state.wanted) {
+    dispatch(state, reported);
+    state.dispatchDelay = 1.8;
   }
-  const moving = state.police.filter(unit => !unit.roadblock);
-  if (moving.length < state.wanted && state.dispatchDelay === 0) {
-    spawnPatrol(state);
-    state.dispatchDelay = 2;
-  } else if (moving.length > state.wanted) {
-    const distanceToPlayer = unit => Math.hypot(unit.x - state.player.x, unit.y - state.player.y);
-    const farthest = moving.reduce((a, b) => distanceToPlayer(a) > distanceToPlayer(b) ? a : b);
-    state.police.splice(state.police.indexOf(farthest), 1);
+  const barrierIndex = state.police.findIndex(car => car.roadblock);
+  if (barrierIndex >= 0 && state.wanted < 3) {
+    state.police.splice(barrierIndex, 1);
+  } else if (barrierIndex < 0 && state.wanted >= 3) {
+    blockade(state, target);
   }
-  if (state.wanted >= 3 && !state.police.some(unit => unit.roadblock)) placeRoadblock(state);
-
-  for (const unit of state.police) {
-    if (unit.down) continue;
-    unit.ramCooldown = Math.max(0, unit.ramCooldown - dt);
-    const distance = Math.hypot(state.player.x - unit.x, state.player.y - unit.y);
-    const sees = distance < 275 && clearLine(state.world, unit, state.player, 0);
-    if (sees) {
-      state.policeSeesPlayer = true;
-      unit.lastKnown = { x: state.player.x, y: state.player.y };
+  for (const car of state.police) {
+    car.ramCooldown = Math.max(0, (car.ramCooldown || 0) - dt);
+    if (car.down > 0) continue;
+    if (!car.roadblock) pursue(car, reported, state.wanted, dt);
+    const distance = gap(car, target);
+    const contact = distance < CAR_W / 2 + (state.car ? CAR_W / 2 : PLAYER_R);
+    if (contact || canSee(state.world, car, target, distance)) state.policeSeePlayer = true;
+    if (contact && !car.ramCooldown) {
+      state.player.health = Math.max(0, state.player.health - (state.car ? 9 : 13));
+      if (state.car) state.car.speed *= 0.65;
+      car.ramCooldown = 1.6;
+      (state.events ??= []).push('crash');
     }
-    if (!unit.roadblock) pursue(state, unit, sees, dt);
-    const contact = (state.player.onFoot ? PLAYER_R : CAR_H) + CAR_H / 2;
-    if (distance <= contact && unit.ramCooldown === 0 && state.time >= (state.ramGraceUntil || 0)) {
-      state.player.health = Math.max(0, state.player.health - (state.player.onFoot ? 10 : 7));
-      if (state.car) {
-        state.car.speed *= unit.roadblock ? -0.18 : 0.6;
-        state.player.speed = state.car.speed;
-      }
-      state.ramGraceUntil = state.time + 1.2;
-      unit.ramCooldown = 2;
-      state.events.push('crash');
-    }
+  }
+  if (state.policeSeePlayer) {
+    reported.x = target.x;
+    reported.y = target.y;
   }
 }
 
 export function decayWanted(state, dt) {
-  if (!state.wanted || state.policeSeesPlayer) {
+  if (!state.wanted || state.policeSeePlayer) {
     state.unseenTime = 0;
     return;
   }
   state.unseenTime = (state.unseenTime || 0) + dt;
-  const cooled = Math.floor((state.unseenTime + 1e-8) / 10);
-  if (cooled) {
-    state.wanted = Math.max(0, state.wanted - cooled);
-    state.unseenTime = state.wanted ? Math.max(0, state.unseenTime - cooled * 10) : 0;
+  const lost = Math.floor((state.unseenTime + 1e-8) / 10);
+  if (lost > 0) {
+    state.wanted = Math.max(0, state.wanted - lost);
+    state.unseenTime = state.wanted ? Math.max(0, state.unseenTime - lost * 10) : 0;
     if (!state.wanted) state.police.length = 0;
   }
 }

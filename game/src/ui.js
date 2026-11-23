@@ -1,163 +1,210 @@
 import { CITY_NAME, PLAYER_NAME } from './config.js';
 
 const STYLE_ID = 'marlin-bay-ui-styles';
+let activeScreen = null;
 
 function ensureStyles() {
-  if (typeof document === 'undefined') return;
-  if (document.getElementById(STYLE_ID)) return;
-
+  if (typeof document === 'undefined' || document.getElementById(STYLE_ID)) return;
   const style = document.createElement('style');
   style.id = STYLE_ID;
   style.textContent = `
-    .mb-backdrop {
+    .mb-screen {
       position: absolute;
       inset: 0;
       display: flex;
       align-items: center;
       justify-content: center;
       padding: 28px;
-      background: radial-gradient(circle at 50% 42%, rgba(10, 26, 44, 0.54) 0%, rgba(6, 14, 24, 0.80) 100%);
+      pointer-events: auto;
+      background: radial-gradient(circle at 50% 35%, rgba(9, 29, 46, 0.52), rgba(5, 14, 24, 0.8));
       backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
+      font-family: 'Avenir Next', 'Segoe UI', 'Helvetica Neue', system-ui, -apple-system, sans-serif;
+      color: #f4f9fc;
+      animation: mbFadeIn 180ms ease-out;
     }
 
-    .mb-backdrop.mb-title-backdrop {
-      background: linear-gradient(125deg, rgba(14, 24, 42, 0.72) 0%, rgba(18, 30, 52, 0.42) 55%, rgba(255, 118, 87, 0.22) 100%);
-      backdrop-filter: blur(2px);
+    @keyframes mbFadeIn {
+      from { opacity: 0; transform: scale(0.985); }
+      to { opacity: 1; transform: scale(1); }
     }
 
     .mb-card {
-      width: 560px;
-      max-width: 92%;
-      padding: 34px 38px 30px;
-      border-radius: 16px;
-      background: linear-gradient(180deg, rgba(12, 26, 42, 0.92) 0%, rgba(9, 20, 34, 0.95) 100%);
-      border: 1.5px solid rgba(110, 224, 232, 0.32);
-      box-shadow: 0 28px 70px rgba(0, 0, 0, 0.58), inset 0 1px 0 rgba(255, 255, 255, 0.08);
-      color: #eef6fa;
+      position: relative;
+      width: min(560px, 92%);
+      padding: 32px 36px 30px;
+      border-radius: 18px;
+      background: linear-gradient(160deg, rgba(12, 30, 48, 0.94), rgba(8, 20, 34, 0.96));
+      border: 1px solid rgba(114, 224, 232, 0.32);
+      box-shadow:
+        0 26px 70px rgba(0, 0, 0, 0.58),
+        inset 0 1px 0 rgba(255, 255, 255, 0.14);
       text-align: center;
+      overflow: hidden;
     }
 
-    .mb-card.mb-wide {
-      width: 680px;
+    .mb-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 4px;
+      background: linear-gradient(90deg, #36d6cf, #ffd166, #ff6b6b);
     }
 
-    .mb-eyebrow {
+    .mb-card--gameover::before {
+      background: linear-gradient(90deg, #ff4d6d, #ff8f5e, #ffd166);
+    }
+
+    .mb-card--mission::before {
+      background: linear-gradient(90deg, #2ee68a, #ffd166, #36d6cf);
+    }
+
+    .mb-kicker {
       display: inline-block;
-      margin-bottom: 10px;
       padding: 4px 12px;
       border-radius: 999px;
+      background: rgba(54, 214, 207, 0.15);
+      border: 1px solid rgba(54, 214, 207, 0.36);
+      color: #79f2ea;
       font-size: 11px;
       font-weight: 800;
-      letter-spacing: 0.16em;
+      letter-spacing: 0.18em;
       text-transform: uppercase;
-      color: #091724;
-      background: linear-gradient(90deg, #5be3d8 0%, #ffd166 100%);
+      margin-bottom: 12px;
     }
 
-    .mb-eyebrow.mb-danger {
-      color: #fff;
-      background: linear-gradient(90deg, #ff5f6d 0%, #ff8e53 100%);
+    .mb-kicker--gold {
+      background: rgba(255, 209, 102, 0.16);
+      border-color: rgba(255, 209, 102, 0.45);
+      color: #ffd97d;
     }
 
-    .mb-eyebrow.mb-success {
-      color: #072219;
-      background: linear-gradient(90deg, #4ce09e 0%, #ffd166 100%);
+    .mb-kicker--danger {
+      background: rgba(255, 77, 109, 0.18);
+      border-color: rgba(255, 77, 109, 0.45);
+      color: #ff8fa3;
     }
 
     .mb-title {
-      font-size: 58px;
+      margin: 0;
+      font-size: 48px;
+      line-height: 1.04;
       font-weight: 900;
-      line-height: 1.02;
-      letter-spacing: 0.06em;
+      letter-spacing: 0.08em;
       text-transform: uppercase;
-      background: linear-gradient(180deg, #fff4c2 0%, #ffd166 48%, #ff7a59 100%);
+      background: linear-gradient(180deg, #fff6da 0%, #ffd166 52%, #ff7a59 100%);
       -webkit-background-clip: text;
       background-clip: text;
       color: transparent;
-      filter: drop-shadow(0 4px 14px rgba(255, 122, 89, 0.30));
-      margin-bottom: 10px;
+      text-shadow: 0 6px 24px rgba(255, 122, 89, 0.22);
     }
 
-    .mb-heading {
-      font-size: 36px;
-      font-weight: 900;
-      letter-spacing: 0.05em;
-      text-transform: uppercase;
-      color: #fff6dc;
-      margin-bottom: 8px;
+    .mb-title--compact {
+      font-size: 38px;
     }
 
-    .mb-subtitle {
+    .mb-title--danger {
+      background: linear-gradient(180deg, #ffe0e6 0%, #ff6b81 55%, #e63946 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+    }
+
+    .mb-title--success {
+      background: linear-gradient(180deg, #f3fff8 0%, #7ef5b5 50%, #2ec4b6 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+    }
+
+    .mb-story {
+      margin: 14px auto 20px;
+      max-width: 460px;
+      color: #c7dde8;
       font-size: 15px;
       line-height: 1.5;
-      color: #c7dfec;
-      margin: 0 auto 22px;
-      max-width: 480px;
-    }
-
-    .mb-reward {
-      display: inline-block;
-      margin: 4px 0 20px;
-      padding: 10px 24px;
-      border-radius: 10px;
-      font-size: 28px;
-      font-weight: 900;
-      letter-spacing: 0.04em;
-      color: #5ef2a8;
-      background: rgba(34, 197, 122, 0.14);
-      border: 1.5px solid rgba(94, 242, 168, 0.42);
-    }
-
-    .mb-stats {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 12px;
-      margin-bottom: 24px;
-    }
-
-    .mb-stat {
-      padding: 12px 14px;
-      border-radius: 10px;
-      background: rgba(255, 255, 255, 0.05);
-      border: 1px solid rgba(154, 214, 232, 0.15);
-    }
-
-    .mb-stat-label {
-      font-size: 11px;
-      font-weight: 700;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-      color: #8db3c9;
-      margin-bottom: 4px;
-    }
-
-    .mb-stat-value {
-      font-size: 22px;
-      font-weight: 800;
-      color: #ffffff;
-    }
-
-    .mb-stat-value.mb-cash {
-      color: #5ef2a8;
     }
 
     .mb-controls {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 8px 14px;
-      text-align: left;
       padding: 14px 16px;
-      margin-bottom: 24px;
-      border-radius: 10px;
-      background: rgba(7, 17, 29, 0.65);
-      border: 1px solid rgba(120, 216, 230, 0.16);
+      margin: 0 0 24px;
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.09);
+      text-align: left;
       font-size: 13px;
-      color: #c5dde9;
+      color: #d5e6ef;
     }
 
-    .mb-controls b {
-      color: #ffd166;
+    .mb-ctrl-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .mb-key {
+      min-width: 54px;
+      padding: 3px 7px;
+      border-radius: 6px;
+      text-align: center;
+      background: rgba(54, 214, 207, 0.14);
+      border: 1px solid rgba(54, 214, 207, 0.3);
+      color: #ffffff;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11px;
       font-weight: 700;
+    }
+
+    .mb-stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+      gap: 10px;
+      margin: 18px 0 24px;
+    }
+
+    .mb-stat {
+      padding: 12px 10px;
+      border-radius: 11px;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .mb-stat-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: #8fb4c7;
+      margin-bottom: 4px;
+    }
+
+    .mb-stat-value {
+      font-size: 24px;
+      font-weight: 800;
+      color: #ffffff;
+    }
+
+    .mb-stat-value--money {
+      color: #4ef0a3;
+    }
+
+    .mb-stat-value--gold {
+      color: #ffd166;
+    }
+
+    .mb-reward {
+      display: inline-block;
+      margin: 12px 0 6px;
+      padding: 8px 22px;
+      border-radius: 999px;
+      background: rgba(46, 230, 138, 0.15);
+      border: 1px solid rgba(46, 230, 138, 0.45);
+      color: #5ef5ab;
+      font-size: 26px;
+      font-weight: 900;
+      letter-spacing: 0.04em;
     }
 
     .mb-actions {
@@ -166,6 +213,7 @@ function ensureStyles() {
       align-items: center;
       justify-content: center;
       gap: 12px;
+      margin-top: 6px;
     }
 
     .mb-btn {
@@ -174,362 +222,414 @@ function ensureStyles() {
       cursor: pointer;
       padding: 13px 30px;
       border-radius: 10px;
+      font-family: inherit;
       font-size: 15px;
       font-weight: 800;
       letter-spacing: 0.08em;
       text-transform: uppercase;
-      transition: transform 0.12s ease, box-shadow 0.12s ease, filter 0.12s ease;
+      transition: transform 120ms ease, filter 120ms ease, box-shadow 120ms ease;
     }
 
     .mb-btn:hover {
       transform: translateY(-1px);
-      filter: brightness(1.06);
+      filter: brightness(1.07);
     }
 
     .mb-btn:active {
       transform: translateY(1px);
     }
 
-    .mb-btn-primary {
-      color: #101926;
-      background: linear-gradient(90deg, #ffd166 0%, #ff9b54 100%);
-      box-shadow: 0 10px 24px rgba(255, 155, 84, 0.34);
+    .mb-btn--primary {
+      background: linear-gradient(135deg, #ff7a59, #ffb347);
+      color: #131c29;
+      box-shadow: 0 10px 26px rgba(255, 122, 89, 0.36);
     }
 
-    .mb-btn-secondary {
-      color: #dff4fb;
-      background: rgba(255, 255, 255, 0.09);
-      border: 1px solid rgba(142, 216, 232, 0.32);
+    .mb-btn--success {
+      background: linear-gradient(135deg, #2ee68a, #36d6cf);
+      color: #082026;
+      box-shadow: 0 10px 26px rgba(46, 230, 138, 0.32);
     }
 
-    .mb-mission-list {
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-      margin-bottom: 20px;
-      text-align: left;
-    }
-
-    .mb-mission-item {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 14px;
-      padding: 13px 16px;
-      border-radius: 10px;
-      background: rgba(255, 255, 255, 0.05);
-      border: 1px solid rgba(132, 216, 232, 0.22);
-      cursor: pointer;
-      color: #eef6fa;
-      text-align: left;
-      width: 100%;
-    }
-
-    .mb-mission-item:hover {
-      background: rgba(91, 227, 216, 0.12);
-      border-color: rgba(91, 227, 216, 0.55);
-    }
-
-    .mb-mission-name {
-      font-size: 15px;
-      font-weight: 800;
-      color: #fff6dc;
-      margin-bottom: 3px;
-    }
-
-    .mb-mission-desc {
-      font-size: 12px;
-      color: #a8c7d8;
-    }
-
-    .mb-mission-pay {
-      font-size: 15px;
-      font-weight: 900;
-      color: #5ef2a8;
-      white-space: nowrap;
+    .mb-btn--secondary {
+      background: rgba(255, 255, 255, 0.1);
+      color: #eaf5fa;
+      border: 1px solid rgba(255, 255, 255, 0.22);
     }
   `;
   document.head.appendChild(style);
 }
 
-function getOverlayRoot() {
+function getContainer() {
   if (typeof document === 'undefined') return null;
-  let root = document.getElementById('ui-overlay');
-  if (!root) {
-    const stage = document.getElementById('stage') || document.getElementById('game')?.parentElement || document.body;
-    root = document.createElement('div');
-    root.id = 'ui-overlay';
-    root.style.position = 'absolute';
-    root.style.inset = '0';
-    root.style.zIndex = '10';
-    stage.appendChild(root);
+  let el = document.getElementById('ui-overlay');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'ui-overlay';
+    el.style.position = 'fixed';
+    el.style.inset = '0';
+    el.style.pointerEvents = 'none';
+    el.style.zIndex = '100';
+    document.body.appendChild(el);
   }
-  return root;
+  return el;
 }
 
-function escapeHtml(text) {
-  return String(text ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+function formatMoney(n) {
+  const num = Number.isFinite(Number(n)) ? Math.round(Number(n)) : 0;
+  return '$' + num.toLocaleString('en-US');
 }
 
-function formatMoney(amount) {
-  const n = Math.round(Number(amount) || 0);
-  return `$${n.toLocaleString('en-US')}`;
+function formatNum(n) {
+  const num = Number.isFinite(Number(n)) ? Math.round(Number(n)) : 0;
+  return num.toLocaleString('en-US');
 }
 
-function emitAction(screen, action, payload = null) {
-  if (typeof window === 'undefined') return;
-  try {
-    window.dispatchEvent(new CustomEvent('marlinbay:ui', { detail: { screen, action, payload } }));
-    window.dispatchEvent(new CustomEvent(`marlinbay:${action}`, { detail: { screen, payload } }));
-  } catch {
-    // Ignore environments without CustomEvent
+function pickCallback(data, names) {
+  if (typeof data === 'function') return data;
+  if (!data || typeof data !== 'object') return null;
+  for (const key of names) {
+    if (typeof data[key] === 'function') return data[key];
+  }
+  return null;
+}
+
+function triggerAction(screenName, action, data, callbackKeys) {
+  const cb = pickCallback(data, callbackKeys);
+  hideScreens();
+  if (cb) {
+    cb(action);
+  }
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(
+      new CustomEvent('ui:action', { detail: { screen: screenName, action } })
+    );
+    window.dispatchEvent(
+      new CustomEvent('marlinbay:ui', { detail: { screen: screenName, action } })
+    );
   }
 }
 
-function bindButton(root, selector, callback, screen, action, autoHide = true) {
-  const el = root.querySelector(selector);
-  if (!el) return;
-  el.addEventListener('click', (event) => {
-    event.stopPropagation();
-    if (autoHide) hideScreens();
-    if (typeof callback === 'function') {
-      callback();
-    }
-    emitAction(screen, action);
+function makeButton(label, variant, action, screenName, data, callbackKeys) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = `mb-btn mb-btn--${variant}`;
+  btn.dataset.action = action;
+  btn.id = `btn-${action}`;
+  btn.textContent = label;
+  btn.addEventListener('click', () => {
+    triggerAction(screenName, action, data, callbackKeys);
   });
+  return btn;
 }
 
-export function hideScreens() {
-  if (typeof document === 'undefined') return;
-  const root = document.getElementById('ui-overlay');
-  if (!root) return;
-  root.classList.remove('is-visible');
-  root.innerHTML = '';
+function buildTitleScreen(data) {
+  const card = document.createElement('div');
+  card.className = 'mb-card';
+
+  const kicker = document.createElement('div');
+  kicker.className = 'mb-kicker';
+  kicker.textContent = 'Coastal Open-World Crime';
+
+  const title = document.createElement('h1');
+  title.className = 'mb-title';
+  title.textContent = data?.title || CITY_NAME;
+
+  const story = document.createElement('p');
+  story.className = 'mb-story';
+  story.textContent =
+    data?.story ||
+    `${PLAYER_NAME} hit the boardwalk of ${CITY_NAME} with zero cash and fast hands — run coastal jobs, outrun the heat, and claim the strip.`;
+
+  const controls = document.createElement('div');
+  controls.className = 'mb-controls';
+  const rows = [
+    ['WASD', 'Move & Drive'],
+    ['E', 'Enter / Exit Car'],
+    ['F', 'Attack'],
+    ['Space', 'Handbrake'],
+    ['P', 'Pause'],
+    ['M', 'Missions'],
+  ];
+  for (const [key, desc] of rows) {
+    const row = document.createElement('div');
+    row.className = 'mb-ctrl-row';
+    const k = document.createElement('span');
+    k.className = 'mb-key';
+    k.textContent = key;
+    const d = document.createElement('span');
+    d.textContent = desc;
+    row.append(k, d);
+    controls.appendChild(row);
+  }
+
+  const actions = document.createElement('div');
+  actions.className = 'mb-actions';
+  actions.appendChild(
+    makeButton(
+      data?.buttonLabel || 'Click to Start',
+      'primary',
+      'start',
+      'title',
+      data,
+      ['onStart', 'onPlay', 'start', 'onClick', 'callback']
+    )
+  );
+
+  if (data?.hasSave || typeof data?.onContinue === 'function') {
+    actions.appendChild(
+      makeButton('Continue Save', 'secondary', 'continue', 'title', data, [
+        'onContinue',
+        'onLoad',
+        'onResume',
+      ])
+    );
+  }
+
+  card.append(kicker, title, story, controls, actions);
+  return card;
+}
+
+function buildPauseScreen(data) {
+  const card = document.createElement('div');
+  card.className = 'mb-card';
+
+  const kicker = document.createElement('div');
+  kicker.className = 'mb-kicker';
+  kicker.textContent = CITY_NAME;
+
+  const title = document.createElement('h2');
+  title.className = 'mb-title mb-title--compact';
+  title.textContent = 'Paused';
+
+  const story = document.createElement('p');
+  story.className = 'mb-story';
+  story.textContent =
+    data?.objective ||
+    data?.missionName ||
+    'Catch your breath before diving back into the streets.';
+
+  const stats = document.createElement('div');
+  stats.className = 'mb-stats';
+  const moneyVal = data?.money ?? data?.player?.money;
+  const scoreVal = data?.score;
+  const wantedVal = data?.wanted;
+  if (moneyVal !== undefined || scoreVal !== undefined || wantedVal !== undefined) {
+    const entries = [
+      ['Cash', formatMoney(moneyVal ?? 0), 'mb-stat-value--money'],
+      ['Score', formatNum(scoreVal ?? 0), 'mb-stat-value--gold'],
+      ['Wanted', `${Math.max(0, Math.min(5, Math.round(wantedVal ?? 0)))} / 5`, ''],
+    ];
+    for (const [label, value, mod] of entries) {
+      const box = document.createElement('div');
+      box.className = 'mb-stat';
+      const l = document.createElement('div');
+      l.className = 'mb-stat-label';
+      l.textContent = label;
+      const v = document.createElement('div');
+      v.className = `mb-stat-value ${mod}`.trim();
+      v.textContent = value;
+      box.append(l, v);
+      stats.appendChild(box);
+    }
+  }
+
+  const actions = document.createElement('div');
+  actions.className = 'mb-actions';
+  actions.appendChild(
+    makeButton('Resume', 'primary', 'resume', 'pause', data, [
+      'onResume',
+      'onContinue',
+      'resume',
+      'onClose',
+      'onClick',
+      'callback',
+    ])
+  );
+  actions.appendChild(
+    makeButton('Restart', 'secondary', 'restart', 'pause', data, [
+      'onRestart',
+      'onRetry',
+      'restart',
+    ])
+  );
+
+  card.append(kicker, title, story);
+  if (stats.childElementCount > 0) card.appendChild(stats);
+  card.appendChild(actions);
+  return card;
+}
+
+function buildGameOverScreen(data) {
+  const card = document.createElement('div');
+  card.className = 'mb-card mb-card--gameover';
+
+  const kicker = document.createElement('div');
+  kicker.className = 'mb-kicker mb-kicker--danger';
+  kicker.textContent = 'Game Over';
+
+  const title = document.createElement('h2');
+  title.className = 'mb-title mb-title--compact mb-title--danger';
+  const busted = data?.reason === 'busted' || data?.busted === true;
+  title.textContent = data?.heading || (busted ? 'Busted' : 'Wasted');
+
+  const story = document.createElement('p');
+  story.className = 'mb-story';
+  story.textContent =
+    data?.message ||
+    (busted
+      ? 'Marlin Bay PD boxed you in. Shake the dust off and run it back.'
+      : `${PLAYER_NAME} went down on the strip. Get back out there and settle the score.`);
+
+  const stats = document.createElement('div');
+  stats.className = 'mb-stats';
+  const score = data?.score ?? 0;
+  const money = data?.money ?? data?.player?.money ?? 0;
+  const items = [
+    ['Final Score', formatNum(score), 'mb-stat-value--gold'],
+    ['Cash', formatMoney(money), 'mb-stat-value--money'],
+  ];
+  if (data?.missionsDone !== undefined) {
+    items.push(['Missions', String(data.missionsDone), '']);
+  }
+  for (const [label, value, mod] of items) {
+    const box = document.createElement('div');
+    box.className = 'mb-stat';
+    const l = document.createElement('div');
+    l.className = 'mb-stat-label';
+    l.textContent = label;
+    const v = document.createElement('div');
+    v.className = `mb-stat-value ${mod}`.trim();
+    v.textContent = value;
+    box.append(l, v);
+    stats.appendChild(box);
+  }
+
+  const actions = document.createElement('div');
+  actions.className = 'mb-actions';
+  actions.appendChild(
+    makeButton('Restart', 'primary', 'restart', 'gameover', data, [
+      'onRestart',
+      'onRetry',
+      'restart',
+      'onStart',
+      'onClick',
+      'callback',
+    ])
+  );
+
+  card.append(kicker, title, story, stats, actions);
+  return card;
+}
+
+function buildMissionScreen(data) {
+  const card = document.createElement('div');
+  card.className = 'mb-card mb-card--mission';
+
+  const kicker = document.createElement('div');
+  kicker.className = 'mb-kicker mb-kicker--gold';
+  kicker.textContent = 'Job Cleared';
+
+  const title = document.createElement('h2');
+  title.className = 'mb-title mb-title--compact mb-title--success';
+  title.textContent = 'Mission Complete';
+
+  const missionName = data?.name || data?.mission?.name || 'Coastal Contract';
+  const story = document.createElement('p');
+  story.className = 'mb-story';
+  story.textContent = data?.message || `"${missionName}" wrapped up cleanly in ${CITY_NAME}.`;
+
+  const rewardAmt = data?.reward ?? data?.payout ?? data?.mission?.reward ?? 200;
+  const reward = document.createElement('div');
+  reward.className = 'mb-reward';
+  reward.textContent = `+${formatMoney(rewardAmt)}`;
+
+  const stats = document.createElement('div');
+  stats.className = 'mb-stats';
+  const money = data?.money ?? data?.player?.money;
+  const score = data?.score;
+  const entries = [];
+  if (money !== undefined) entries.push(['Bank', formatMoney(money), 'mb-stat-value--money']);
+  if (score !== undefined) entries.push(['Score', formatNum(score), 'mb-stat-value--gold']);
+  for (const [label, value, mod] of entries) {
+    const box = document.createElement('div');
+    box.className = 'mb-stat';
+    const l = document.createElement('div');
+    l.className = 'mb-stat-label';
+    l.textContent = label;
+    const v = document.createElement('div');
+    v.className = `mb-stat-value ${mod}`.trim();
+    v.textContent = value;
+    box.append(l, v);
+    stats.appendChild(box);
+  }
+
+  const actions = document.createElement('div');
+  actions.className = 'mb-actions';
+  actions.appendChild(
+    makeButton(
+      data?.buttonLabel || 'Continue',
+      'success',
+      'continue',
+      'mission',
+      data,
+      ['onContinue', 'onNext', 'onResume', 'onClose', 'onClick', 'callback']
+    )
+  );
+  if (typeof data?.onNextMission === 'function') {
+    actions.appendChild(
+      makeButton('Next Mission', 'secondary', 'next', 'mission', data, ['onNextMission'])
+    );
+  }
+
+  card.append(kicker, title, story, reward);
+  if (stats.childElementCount > 0) card.appendChild(stats);
+  card.appendChild(actions);
+  return card;
 }
 
 export function showScreen(name, data = {}) {
-  if (typeof document === 'undefined') return;
+  const container = getContainer();
+  if (!container) return;
   ensureStyles();
-  const root = getOverlayRoot();
-  if (!root) return;
+  container.innerHTML = '';
 
-  const info = data && typeof data === 'object' ? data : {};
-  const screenName = String(name || 'title').toLowerCase();
+  const screen = document.createElement('div');
+  screen.className = `mb-screen mb-screen--${name}`;
+  screen.dataset.screen = name;
 
-  if (screenName === 'title') {
-    const title = info.title || CITY_NAME;
-    const story =
-      info.story ||
-      `${PLAYER_NAME} rolled into ${CITY_NAME} with empty pockets, sunburnt nerves, and a fast getaway plan.`;
-    const hasSave = Boolean(info.hasSave || info.onContinue);
-
-    root.innerHTML = `
-      <div class="mb-backdrop mb-title-backdrop" data-screen="title">
-        <div class="mb-card mb-wide">
-          <div class="mb-eyebrow">Coastal Open-World Crime</div>
-          <h1 class="mb-title">${escapeHtml(title)}</h1>
-          <p class="mb-subtitle">${escapeHtml(story)}</p>
-          <div class="mb-controls">
-            <div><b>WASD / Arrows</b> — Move &amp; Drive</div>
-            <div><b>E</b> — Steal / Exit Car</div>
-            <div><b>Space</b> — Handbrake Drift</div>
-            <div><b>F</b> — Attack</div>
-            <div><b>M</b> — Missions</div>
-            <div><b>P</b> — Pause</div>
-          </div>
-          <div class="mb-actions">
-            <button type="button" class="mb-btn mb-btn-primary" data-action="start">
-              ${escapeHtml(info.startLabel || 'Click to Start')}
-            </button>
-            ${
-              hasSave
-                ? `<button type="button" class="mb-btn mb-btn-secondary" data-action="continue">Continue Save</button>`
-                : ''
-            }
-          </div>
-        </div>
-      </div>
-    `;
-
-    const startCb = info.onStart || info.start || info.onPlay || info.onClick;
-    bindButton(root, '[data-action="start"]', startCb, 'title', 'start', true);
-    if (hasSave) {
-      bindButton(root, '[data-action="continue"]', info.onContinue || startCb, 'title', 'continue', true);
-    }
-  } else if (screenName === 'pause') {
-    const objective = info.objective || info.mission?.objective || 'Cruise the bay or press M to pick a job.';
-    root.innerHTML = `
-      <div class="mb-backdrop" data-screen="pause">
-        <div class="mb-card">
-          <div class="mb-eyebrow">Game Paused</div>
-          <h2 class="mb-heading">${escapeHtml(CITY_NAME)}</h2>
-          <p class="mb-subtitle">${escapeHtml(objective)}</p>
-          <div class="mb-controls">
-            <div><b>WASD / Arrows</b> — Move &amp; Drive</div>
-            <div><b>E</b> — Enter / Exit Car</div>
-            <div><b>Space</b> — Handbrake</div>
-            <div><b>F</b> — Attack</div>
-            <div><b>M</b> — Missions</div>
-            <div><b>P</b> — Resume</div>
-          </div>
-          <div class="mb-actions">
-            <button type="button" class="mb-btn mb-btn-primary" data-action="resume">Resume</button>
-            <button type="button" class="mb-btn mb-btn-secondary" data-action="restart">Restart</button>
-          </div>
-        </div>
-      </div>
-    `;
-
-    const resumeCb = info.onResume || info.resume || info.onContinue || info.onClose;
-    const restartCb = info.onRestart || info.restart;
-    bindButton(root, '[data-action="resume"]', resumeCb, 'pause', 'resume', true);
-    bindButton(root, '[data-action="restart"]', restartCb, 'pause', 'restart', true);
-  } else if (screenName === 'gameover') {
-    const score = Math.round(Number(info.score) || 0);
-    const money = Number(info.money) || 0;
-    const subtitle = info.reason || info.message || `${PLAYER_NAME} was taken down on the streets of ${CITY_NAME}.`;
-
-    root.innerHTML = `
-      <div class="mb-backdrop" data-screen="gameover">
-        <div class="mb-card">
-          <div class="mb-eyebrow mb-danger">Busted / Wasted</div>
-          <h2 class="mb-heading">Game Over</h2>
-          <p class="mb-subtitle">${escapeHtml(subtitle)}</p>
-          <div class="mb-stats">
-            <div class="mb-stat">
-              <div class="mb-stat-label">Final Score</div>
-              <div class="mb-stat-value">${score.toLocaleString('en-US')}</div>
-            </div>
-            <div class="mb-stat">
-              <div class="mb-stat-label">Cash Earned</div>
-              <div class="mb-stat-value mb-cash">${escapeHtml(formatMoney(money))}</div>
-            </div>
-          </div>
-          <div class="mb-actions">
-            <button type="button" class="mb-btn mb-btn-primary" data-action="restart">
-              ${escapeHtml(info.restartLabel || 'Restart')}
-            </button>
-          </div>
-        </div>
-      </div>
-    `;
-
-    const restartCb = info.onRestart || info.restart || info.onRetry || info.onStart || info.onClick;
-    bindButton(root, '[data-action="restart"]', restartCb, 'gameover', 'restart', true);
-  } else if (screenName === 'mission') {
-    const missionName = info.name || info.mission?.name || 'Job Complete';
-    const reward = Number(info.reward ?? info.mission?.reward ?? 200) || 0;
-    const money = info.money;
-    const score = info.score;
-    const summary =
-      info.summary ||
-      info.message ||
-      `Clean work, ${PLAYER_NAME}. Your payout has been wired to your stash.`;
-
-    const statsHtml =
-      money !== undefined || score !== undefined
-        ? `
-          <div class="mb-stats">
-            <div class="mb-stat">
-              <div class="mb-stat-label">Total Cash</div>
-              <div class="mb-stat-value mb-cash">${escapeHtml(formatMoney(money ?? reward))}</div>
-            </div>
-            <div class="mb-stat">
-              <div class="mb-stat-label">Score</div>
-              <div class="mb-stat-value">${Math.round(Number(score) || 0).toLocaleString('en-US')}</div>
-            </div>
-          </div>
-        `
-        : '';
-
-    root.innerHTML = `
-      <div class="mb-backdrop" data-screen="mission">
-        <div class="mb-card">
-          <div class="mb-eyebrow mb-success">Mission Complete</div>
-          <h2 class="mb-heading">${escapeHtml(missionName)}</h2>
-          <p class="mb-subtitle">${escapeHtml(summary)}</p>
-          <div class="mb-reward">+${escapeHtml(formatMoney(reward))}</div>
-          ${statsHtml}
-          <div class="mb-actions">
-            <button type="button" class="mb-btn mb-btn-primary" data-action="continue">
-              ${escapeHtml(info.continueLabel || 'Continue')}
-            </button>
-          </div>
-        </div>
-      </div>
-    `;
-
-    const continueCb = info.onContinue || info.onNext || info.onClose || info.onResume || info.onClick;
-    bindButton(root, '[data-action="continue"]', continueCb, 'mission', 'continue', true);
-  } else if (screenName === 'missions') {
-    const list = Array.isArray(info.missions) ? info.missions : [];
-    const itemsHtml = list
-      .map((m, idx) => {
-        const id = m.id ?? idx;
-        const done = Boolean(m.done || m.completed);
-        const reward = Number(m.reward ?? 0);
-        return `
-          <button type="button" class="mb-mission-item" data-mission-idx="${idx}" data-mission-id="${escapeHtml(id)}">
-            <div>
-              <div class="mb-mission-name">${escapeHtml(m.name || `Mission ${idx + 1}`)}${done ? ' (Completed)' : ''}</div>
-              <div class="mb-mission-desc">${escapeHtml(m.description || m.objective || 'Take on a new contract in Marlin Bay.')}</div>
-            </div>
-            <div class="mb-mission-pay">+${escapeHtml(formatMoney(reward))}</div>
-          </button>
-        `;
-      })
-      .join('');
-
-    root.innerHTML = `
-      <div class="mb-backdrop" data-screen="missions">
-        <div class="mb-card mb-wide">
-          <div class="mb-eyebrow">Contracts</div>
-          <h2 class="mb-heading">Missions</h2>
-          <p class="mb-subtitle">Choose a job across ${escapeHtml(CITY_NAME)}.</p>
-          <div class="mb-mission-list">
-            ${itemsHtml || '<p class="mb-subtitle">No contracts available right now.</p>'}
-          </div>
-          <div class="mb-actions">
-            <button type="button" class="mb-btn mb-btn-secondary" data-action="close">Close</button>
-          </div>
-        </div>
-      </div>
-    `;
-
-    const selectCb = info.onSelect || info.onStartMission;
-    root.querySelectorAll('[data-mission-idx]').forEach((btn) => {
-      btn.addEventListener('click', (event) => {
-        event.stopPropagation();
-        const idx = Number(btn.getAttribute('data-mission-idx'));
-        const item = list[idx];
-        hideScreens();
-        if (typeof selectCb === 'function') {
-          selectCb(item?.id ?? idx, item);
-        }
-        emitAction('missions', 'select', item);
-      });
-    });
-
-    const closeCb = info.onClose || info.onResume;
-    bindButton(root, '[data-action="close"]', closeCb, 'missions', 'close', true);
-  } else {
-    root.innerHTML = `
-      <div class="mb-backdrop" data-screen="${escapeHtml(screenName)}">
-        <div class="mb-card">
-          <h2 class="mb-heading">${escapeHtml(info.title || CITY_NAME)}</h2>
-          <p class="mb-subtitle">${escapeHtml(info.message || '')}</p>
-          <div class="mb-actions">
-            <button type="button" class="mb-btn mb-btn-primary" data-action="close">Continue</button>
-          </div>
-        </div>
-      </div>
-    `;
-    bindButton(root, '[data-action="close"]', info.onClose || info.onClick, screenName, 'close', true);
+  let card;
+  switch (name) {
+    case 'title':
+      card = buildTitleScreen(data);
+      break;
+    case 'pause':
+      card = buildPauseScreen(data);
+      break;
+    case 'gameover':
+      card = buildGameOverScreen(data);
+      break;
+    case 'mission':
+      card = buildMissionScreen(data);
+      break;
+    default:
+      card = buildPauseScreen(data);
+      break;
   }
 
-  root.classList.add('is-visible');
+  screen.appendChild(card);
+  container.appendChild(screen);
+  activeScreen = name;
+}
+
+export function hideScreens() {
+  const container = getContainer();
+  if (container) {
+    container.innerHTML = '';
+  }
+  activeScreen = null;
+}
+
+export function getActiveScreen() {
+  return activeScreen;
 }

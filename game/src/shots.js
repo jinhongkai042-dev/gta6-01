@@ -15,123 +15,23 @@ import { hideScreens } from './ui.js';
 function createRng(seed) {
   let s = seed >>> 0;
   return () => {
-    s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
-    return s / 4294967296;
+    s = (s + 0x6d2b79f5) | 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
 
-function buildShotWorld() {
-  const rng = createRng(SEED);
-  const tilesX = WORLD_TILES;
-  const tilesY = WORLD_TILES;
-  const beachStartTile = tilesY - 3;
-
-  const roads = [];
-  for (let ty = 0; ty < tilesY; ty++) {
-    const row = new Array(tilesX).fill(0);
-    for (let tx = 0; tx < tilesX; tx++) {
-      if (ty < beachStartTile && (tx % ROAD_EVERY === 0 || ty % ROAD_EVERY === 0)) {
-        row[tx] = 1;
-      }
-    }
-    roads.push(row);
-  }
-
-  const buildings = [];
-  const palette = [
-    '#f2b8a2',
-    '#a5dfd2',
-    '#f6d58e',
-    '#a8cbe8',
-    '#e9c7b1',
-    '#efe6d5',
-    '#f3b7c8',
-    '#d9c2e9',
-  ];
-
-  // Fill city blocks between grid roads with varied Art Deco footprints
-  for (let by = 0; by < beachStartTile; by += ROAD_EVERY) {
-    for (let bx = 0; bx < tilesX; bx += ROAD_EVERY) {
-      const x0 = (bx + 1) * TILE;
-      const y0 = (by + 1) * TILE;
-      const blockW = (ROAD_EVERY - 1) * TILE;
-      const blockH = (ROAD_EVERY - 1) * TILE;
-      if (by + ROAD_EVERY > beachStartTile) continue;
-
-      // Leave a couple of sunny palm plazas open
-      const plazaRoll = rng();
-      if (plazaRoll < 0.09) continue;
-
-      const splitMode = Math.floor(rng() * 3);
-      const pad = 10;
-      const gap = 12;
-
-      if (splitMode === 0) {
-        // One grand coastal resort / tower
-        buildings.push({
-          x: x0 + pad,
-          y: y0 + pad,
-          w: blockW - pad * 2,
-          h: blockH - pad * 2,
-          color: palette[Math.floor(rng() * palette.length)],
-          stories: 3 + Math.floor(rng() * 3),
-        });
-      } else if (splitMode === 1) {
-        // Two side-by-side buildings
-        const w1 = Math.floor((blockW - pad * 2 - gap) * (0.45 + rng() * 0.15));
-        const w2 = blockW - pad * 2 - gap - w1;
-        buildings.push({
-          x: x0 + pad,
-          y: y0 + pad,
-          w: w1,
-          h: blockH - pad * 2,
-          color: palette[Math.floor(rng() * palette.length)],
-          stories: 2 + Math.floor(rng() * 3),
-        });
-        buildings.push({
-          x: x0 + pad + w1 + gap,
-          y: y0 + pad,
-          w: w2,
-          h: blockH - pad * 2,
-          color: palette[Math.floor(rng() * palette.length)],
-          stories: 1 + Math.floor(rng() * 3),
-        });
-      } else {
-        // Four boutique corner buildings
-        const hw = Math.floor((blockW - pad * 2 - gap) * 0.5);
-        const hh = Math.floor((blockH - pad * 2 - gap) * 0.5);
-        const coords = [
-          [x0 + pad, y0 + pad],
-          [x0 + pad + hw + gap, y0 + pad],
-          [x0 + pad, y0 + pad + hh + gap],
-          [x0 + pad + hw + gap, y0 + pad + hh + gap],
-        ];
-        for (const [cx, cy] of coords) {
-          buildings.push({
-            x: cx,
-            y: cy,
-            w: hw,
-            h: hh,
-            color: palette[Math.floor(rng() * palette.length)],
-            stories: 1 + Math.floor(rng() * 3),
-          });
-        }
-      }
-    }
-  }
-
-  return {
-    tileSize: TILE,
-    w: WORLD_PX,
-    h: WORLD_PX,
-    roads,
-    buildings,
-    spawn: { x: 16 * TILE + 32, y: 32 * TILE + 32 },
-  };
+function laneY(roadRowTile, eastbound) {
+  return roadRowTile * TILE + (eastbound ? 46 : 18);
 }
 
-function roundRect(ctx, x, y, w, h, r) {
-  const rad = Math.min(r, w * 0.5, h * 0.5);
+function laneX(roadColTile, northbound) {
+  return roadColTile * TILE + (northbound ? 46 : 18);
+}
+
+function roundRectPath(ctx, x, y, w, h, r) {
+  const rad = Math.min(r, w / 2, h / 2);
   ctx.beginPath();
   ctx.moveTo(x + rad, y);
   ctx.arcTo(x + w, y, x + w, y + h, rad);
@@ -141,278 +41,112 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-function drawTitleOverlay(ctx, viewW, viewH) {
-  ctx.save();
+function buildSeededWorld(existingWorld) {
+  if (existingWorld && Array.isArray(existingWorld.buildings) && existingWorld.buildings.length > 0) {
+    return existingWorld;
+  }
+  const rng = createRng(SEED);
+  const buildings = [];
+  const palette = ['#f08070', '#5ec9b5', '#f3c15f', '#f4ead6', '#f28cab', '#6eb8ea', '#f4a578', '#82d4aa', '#baa2dc', '#edf2f4'];
 
-  // Warm atmospheric vignette so city shines through around the title card
-  const bgGrad = ctx.createLinearGradient(0, 0, viewW, viewH);
-  bgGrad.addColorStop(0, 'rgba(9, 20, 36, 0.72)');
-  bgGrad.addColorStop(0.55, 'rgba(12, 24, 42, 0.36)');
-  bgGrad.addColorStop(1, 'rgba(255, 118, 84, 0.16)');
-  ctx.fillStyle = bgGrad;
-  ctx.fillRect(0, 0, viewW, viewH);
-
-  // Center-left hero title card
-  const cardW = 620;
-  const cardH = 380;
-  const cardX = (viewW - cardW) * 0.5;
-  const cardY = (viewH - cardH) * 0.5 - 6;
-
-  // Soft shadow
-  ctx.fillStyle = 'rgba(5, 12, 22, 0.48)';
-  roundRect(ctx, cardX + 8, cardY + 14, cardW, cardH, 20);
-  ctx.fill();
-
-  // Glass card body
-  const cardGrad = ctx.createLinearGradient(cardX, cardY, cardX, cardY + cardH);
-  cardGrad.addColorStop(0, 'rgba(12, 27, 44, 0.90)');
-  cardGrad.addColorStop(1, 'rgba(8, 19, 32, 0.94)');
-  ctx.fillStyle = cardGrad;
-  roundRect(ctx, cardX, cardY, cardW, cardH, 20);
-  ctx.fill();
-
-  ctx.strokeStyle = 'rgba(110, 224, 232, 0.42)';
-  ctx.lineWidth = 1.6;
-  ctx.stroke();
-
-  const cx = viewW * 0.5;
-
-  // Eyebrow badge
-  const pillW = 248;
-  const pillH = 26;
-  const pillGrad = ctx.createLinearGradient(cx - pillW * 0.5, 0, cx + pillW * 0.5, 0);
-  pillGrad.addColorStop(0, '#5be3d8');
-  pillGrad.addColorStop(1, '#ffd166');
-  ctx.fillStyle = pillGrad;
-  roundRect(ctx, cx - pillW * 0.5, cardY + 28, pillW, pillH, 13);
-  ctx.fill();
-
-  ctx.fillStyle = '#091724';
-  ctx.font = '800 11px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('OPEN-WORLD COASTAL CRIME', cx, cardY + 41.5);
-
-  // Main Title "MARLIN BAY"
-  const titleGrad = ctx.createLinearGradient(0, cardY + 66, 0, cardY + 144);
-  titleGrad.addColorStop(0, '#fff7cf');
-  titleGrad.addColorStop(0.5, '#ffd166');
-  titleGrad.addColorStop(1, '#ff7a59');
-
-  ctx.font = '900 72px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.42)';
-  ctx.fillText(CITY_NAME.toUpperCase(), cx + 3, cardY + 114);
-  ctx.fillStyle = titleGrad;
-  ctx.fillText(CITY_NAME.toUpperCase(), cx, cardY + 110);
-
-  // Accent bar under title
-  const barGrad = ctx.createLinearGradient(cx - 120, 0, cx + 120, 0);
-  barGrad.addColorStop(0, 'rgba(91, 227, 216, 0)');
-  barGrad.addColorStop(0.5, '#5be3d8');
-  barGrad.addColorStop(1, 'rgba(91, 227, 216, 0)');
-  ctx.fillStyle = barGrad;
-  ctx.fillRect(cx - 130, cardY + 150, 260, 3);
-
-  // Story line
-  ctx.fillStyle = '#d3e8f4';
-  ctx.font = '500 16px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-  ctx.fillText(
-    `${PLAYER_NAME} rolled into ${CITY_NAME} with empty pockets and a fast getaway plan.`,
-    cx,
-    cardY + 178
-  );
-
-  // Controls box
-  const ctrlW = cardW - 76;
-  const ctrlH = 66;
-  const ctrlX = cx - ctrlW * 0.5;
-  const ctrlY = cardY + 206;
-  ctx.fillStyle = 'rgba(6, 15, 26, 0.72)';
-  roundRect(ctx, ctrlX, ctrlY, ctrlW, ctrlH, 10);
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(110, 224, 232, 0.18)';
-  ctx.lineWidth = 1;
-  ctx.stroke();
-
-  ctx.font = '700 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-  ctx.fillStyle = '#ffd166';
-  ctx.fillText('WASD / ARROWS  Move & Drive     ·     E  Enter / Exit Car     ·     SPACE  Handbrake', cx, ctrlY + 22);
-  ctx.fillStyle = '#a8cde0';
-  ctx.fillText('F  Attack     ·     M  Missions     ·     P  Pause', cx, ctrlY + 46);
-
-  // Primary CTA Button
-  const btnW = 244;
-  const btnH = 50;
-  const btnX = cx - btnW * 0.5;
-  const btnY = cardY + 296;
-
-  const btnGrad = ctx.createLinearGradient(btnX, btnY, btnX + btnW, btnY);
-  btnGrad.addColorStop(0, '#ffd166');
-  btnGrad.addColorStop(1, '#ff924c');
-  ctx.fillStyle = btnGrad;
-  roundRect(ctx, btnX, btnY, btnW, btnH, 12);
-  ctx.fill();
-
-  ctx.fillStyle = '#101b29';
-  ctx.font = '900 17px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-  ctx.fillText('CLICK TO START', cx, btnY + btnH * 0.5 + 1);
-
-  ctx.restore();
-}
-
-function drawMissionCompleteOverlay(ctx, viewW, viewH) {
-  ctx.save();
-
-  ctx.fillStyle = 'rgba(7, 16, 28, 0.56)';
-  ctx.fillRect(0, 0, viewW, viewH);
-
-  const cardW = 540;
-  const cardH = 384;
-  const cardX = (viewW - cardW) * 0.5;
-  const cardY = (viewH - cardH) * 0.5;
-  const cx = viewW * 0.5;
-
-  // Drop shadow
-  ctx.fillStyle = 'rgba(4, 10, 20, 0.54)';
-  roundRect(ctx, cardX + 8, cardY + 14, cardW, cardH, 20);
-  ctx.fill();
-
-  // Card
-  const grad = ctx.createLinearGradient(cardX, cardY, cardX, cardY + cardH);
-  grad.addColorStop(0, 'rgba(13, 30, 48, 0.94)');
-  grad.addColorStop(1, 'rgba(8, 20, 34, 0.96)');
-  ctx.fillStyle = grad;
-  roundRect(ctx, cardX, cardY, cardW, cardH, 20);
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(94, 242, 168, 0.48)';
-  ctx.lineWidth = 1.8;
-  ctx.stroke();
-
-  // Eyebrow badge
-  const pillW = 200;
-  const pillGrad = ctx.createLinearGradient(cx - 100, 0, cx + 100, 0);
-  pillGrad.addColorStop(0, '#4ce09e');
-  pillGrad.addColorStop(1, '#ffd166');
-  ctx.fillStyle = pillGrad;
-  roundRect(ctx, cx - pillW * 0.5, cardY + 26, pillW, 26, 13);
-  ctx.fill();
-
-  ctx.fillStyle = '#072219';
-  ctx.font = '900 11px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('MISSION COMPLETE', cx, cardY + 39.5);
-
-  // Mission title
-  ctx.fillStyle = '#fff6dc';
-  ctx.font = '900 40px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-  ctx.fillText('FIRST DELIVERY', cx, cardY + 90);
-
-  // Summary line
-  ctx.fillStyle = '#c4dfed';
-  ctx.font = '500 15px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-  ctx.fillText(`Package dropped off at Marina Pier. Clean getaway, ${PLAYER_NAME}!`, cx, cardY + 126);
-
-  // Reward highlight box
-  const rewW = 240;
-  const rewH = 54;
-  ctx.fillStyle = 'rgba(46, 204, 134, 0.16)';
-  roundRect(ctx, cx - rewW * 0.5, cardY + 152, rewW, rewH, 12);
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(94, 242, 168, 0.52)';
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
-
-  ctx.fillStyle = '#5ef2a8';
-  ctx.font = '900 30px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-  ctx.fillText('+$200 REWARD', cx, cardY + 180);
-
-  // Stats row
-  const stats = [
-    { label: 'TOTAL CASH', value: '$850', color: '#5ef2a8' },
-    { label: 'SCORE', value: '2,150', color: '#ffffff' },
-    { label: 'HEAT', value: 'CLEAR', color: '#5be3d8' },
-  ];
-  const boxW = 144;
-  const boxH = 62;
-  const gap = 14;
-  const rowX = cx - (boxW * 3 + gap * 2) * 0.5;
-  const rowY = cardY + 224;
-
-  for (let i = 0; i < stats.length; i++) {
-    const bx = rowX + i * (boxW + gap);
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
-    roundRect(ctx, bx, rowY, boxW, boxH, 10);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(130, 214, 232, 0.18)';
-    ctx.lineWidth = 1;
-    ctx.stroke();
-
-    ctx.fillStyle = '#8db3c9';
-    ctx.font = '700 10px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-    ctx.fillText(stats[i].label, bx + boxW * 0.5, rowY + 20);
-
-    ctx.fillStyle = stats[i].color;
-    ctx.font = '900 22px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-    ctx.fillText(stats[i].value, bx + boxW * 0.5, rowY + 44);
+  for (let br = 0; br < 36; br += ROAD_EVERY) {
+    for (let bc = 0; bc < WORLD_TILES - 1; bc += ROAD_EVERY) {
+      const bx0 = (bc + 1) * TILE + 10;
+      const by0 = (br + 1) * TILE + 10;
+      const bw = (ROAD_EVERY - 1) * TILE - 20;
+      const bh = (ROAD_EVERY - 1) * TILE - 20;
+      const roll = rng();
+      if (roll < 0.14) continue; // coastal park plaza
+      const pickColor = () => palette[Math.floor(rng() * palette.length)];
+      if (roll < 0.58) {
+        if (rng() > 0.5) {
+          const h1 = Math.floor(bh * (0.44 + rng() * 0.14));
+          buildings.push({ x: bx0, y: by0, w: bw, h: h1 - 6, color: pickColor() });
+          buildings.push({ x: bx0, y: by0 + h1 + 6, w: bw, h: bh - h1 - 6, color: pickColor() });
+        } else {
+          const w1 = Math.floor(bw * (0.44 + rng() * 0.14));
+          buildings.push({ x: bx0, y: by0, w: w1 - 6, h: bh, color: pickColor() });
+          buildings.push({ x: bx0 + w1 + 6, y: by0, w: bw - w1 - 6, h: bh, color: pickColor() });
+        }
+      } else {
+        buildings.push({ x: bx0 + 4, y: by0 + 4, w: bw - 8, h: bh - 8, color: pickColor() });
+      }
+    }
   }
 
-  // Continue CTA
-  const btnW = 228;
-  const btnH = 48;
-  const btnX = cx - btnW * 0.5;
-  const btnY = cardY + 308;
-  const btnGrad = ctx.createLinearGradient(btnX, btnY, btnX + btnW, btnY);
-  btnGrad.addColorStop(0, '#ffd166');
-  btnGrad.addColorStop(1, '#ff9b54');
-  ctx.fillStyle = btnGrad;
-  roundRect(ctx, btnX, btnY, btnW, btnH, 12);
-  ctx.fill();
-
-  ctx.fillStyle = '#101b29';
-  ctx.font = '900 16px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-  ctx.fillText('CONTINUE', cx, btnY + btnH * 0.5 + 1);
-
-  ctx.restore();
+  return {
+    tileSize: TILE,
+    w: WORLD_PX,
+    h: WORLD_PX,
+    roads: [0, 4, 8, 12, 16, 20, 24, 28, 32, 36],
+    buildings,
+    spawn: { x: 1024 + 32, y: 2048 + 46 },
+  };
 }
 
-function buildStartScene(world) {
-  // Show Ocean Boulevard + pastel downtown + palm beach at dawn
-  const camX = 11 * TILE;
-  const camY = 29 * TILE - 18;
+function buildAmbientPeds(seedOffset) {
+  const rng = createRng(SEED + seedOffset);
+  const shirts = ['#ff6b6b', '#4ecdc4', '#ffe66d', '#ffffff', '#ff9f1c', '#a06cd5', '#2ec4b6', '#ff8fab'];
+  const peds = [];
 
+  // Strollers along Ocean Drive boardwalk & golden sand beach
+  for (let i = 0; i < 20; i++) {
+    const x = 660 + i * 72 + (rng() - 0.5) * 28;
+    const onSand = i % 3 === 0;
+    const y = onSand ? 2412 + rng() * 44 : 2376 + (rng() - 0.5) * 10;
+    peds.push({
+      x,
+      y,
+      angle: rng() > 0.5 ? 0.08 : Math.PI - 0.08,
+      speed: onSand ? 0 : 28,
+      color: shirts[i % shirts.length],
+    });
+  }
+
+  // Sidewalk pedestrians along horizontal avenues 28, 32, 36
+  for (const row of [28, 32, 36]) {
+    for (let i = 0; i < 10; i++) {
+      const colBlock = 1 + (i % 8) * 4;
+      const x = colBlock * TILE + 24 + rng() * 140;
+      const y = row * TILE + (i % 2 === 0 ? -7 : TILE + 7);
+      peds.push({
+        x,
+        y,
+        angle: i % 2 === 0 ? 0 : Math.PI,
+        speed: 32,
+        color: shirts[(i + row) % shirts.length],
+      });
+    }
+  }
+  return peds;
+}
+
+function buildStartScene(baseState) {
+  const world = buildSeededWorld(baseState?.world);
   const cars = [
-    { x: 12 * TILE + 18, y: 36 * TILE + 20, angle: 0, speed: 120, color: '#ef476f', model: 'sports' },
-    { x: 18 * TILE + 12, y: 36 * TILE + 44, angle: Math.PI, speed: 110, color: '#2ec4b6', model: 'convertible' },
-    { x: 24 * TILE + 30, y: 36 * TILE + 20, angle: 0, speed: 95, color: '#ffb703', model: 'sedan' },
-    { x: 16 * TILE + 44, y: 33 * TILE + 40, angle: Math.PI * 0.5, speed: 90, color: '#3a86ff', model: 'coupe' },
-    { x: 20 * TILE + 20, y: 31 * TILE + 10, angle: -Math.PI * 0.5, speed: 105, color: '#f4f7fa', model: 'suv' },
-    { x: 14 * TILE + 50, y: 32 * TILE + 20, angle: 0, speed: 85, color: '#fb8500', model: 'sedan' },
-    { x: 26 * TILE + 10, y: 32 * TILE + 44, angle: Math.PI, speed: 95, color: '#06d6a0', model: 'convertible' },
+    { x: 960, y: laneY(36, true), angle: 0, speed: 120, color: '#ff6b6b', model: 'convertible' },
+    { x: 1210, y: laneY(36, true), angle: 0, speed: 135, color: '#ffd166', model: 'taxi' },
+    { x: 1470, y: laneY(36, false), angle: Math.PI, speed: 130, color: '#2ec4b6', model: 'coupe' },
+    { x: 1710, y: laneY(36, false), angle: Math.PI, speed: 115, color: '#f1faee', model: 'sedan' },
+    { x: 1110, y: laneY(32, true), angle: 0, speed: 145, color: '#3a86ff', model: 'sport' },
+    { x: 1420, y: laneY(32, false), angle: Math.PI, speed: 125, color: '#f77f00', model: 'coupe' },
+    { x: 1650, y: laneY(32, true), angle: 0, speed: 110, color: '#f15bb5', model: 'convertible' },
+    { x: laneX(16, true), y: 2170, angle: -Math.PI / 2, speed: 105, color: '#9b5de5', model: 'sedan' },
+    { x: laneX(20, false), y: 1960, angle: Math.PI / 2, speed: 120, color: '#00b4d8', model: 'coupe' },
+    { x: laneX(24, true), y: 2210, angle: -Math.PI / 2, speed: 115, color: '#ffd166', model: 'taxi' },
   ];
 
   const police = [
-    { x: 20 * TILE + 44, y: 36 * TILE + 20, angle: 0, speed: 115, model: 'police', siren: true },
-  ];
-
-  const peds = [
-    { x: 13 * TILE + 40, y: 37 * TILE + 12, angle: 0.2, speed: 30, color: '#ff6b6b' },
-    { x: 15 * TILE + 18, y: 37 * TILE + 14, angle: Math.PI, speed: 25, color: '#4ecdc4' },
-    { x: 19 * TILE + 10, y: 37 * TILE + 12, angle: 0.1, speed: 28, color: '#ffd166' },
-    { x: 23 * TILE + 24, y: 37 * TILE + 14, angle: -2.8, speed: 22, color: '#ffffff' },
-    { x: 16 * TILE - 5, y: 34 * TILE + 24, angle: Math.PI * 0.5, speed: 24, color: '#b388eb' },
-    { x: 21 * TILE + 5, y: 33 * TILE + 40, angle: -Math.PI * 0.5, speed: 20, color: '#7ae582' },
-    { x: 25 * TILE + 20, y: 37 * TILE + 44, angle: 1.4, speed: 12, color: '#f78c6b' },
+    { x: laneX(24, false), y: 1980, angle: Math.PI / 2, speed: 95 },
   ];
 
   const state = {
     time: 4.2,
-    lighting: 'dawn',
     world,
-    player: { x: 16 * TILE + 32, y: 36 * TILE + 32, angle: 0, speed: 0, onFoot: true, health: 100, money: 0 },
+    player: { x: 1320, y: 2376, angle: 0, speed: 0, onFoot: true, health: 100, money: 0, weapon: 'fists' },
     car: null,
     cars,
-    peds,
+    peds: buildAmbientPeds(11),
     police,
     wanted: 0,
     mission: null,
@@ -421,61 +155,58 @@ function buildStartScene(world) {
     paused: false,
   };
 
-  return { state, camera: { x: camX, y: camY } };
+  // Frame Ocean Drive, coastal hotels, pier, and turquoise surf
+  const camera = { x: 740, y: 1852 };
+  return { state, camera };
 }
 
-function buildPlayScene(world) {
-  // Player tearing down Ocean Blvd in a cherry-red sports car with police chase, traffic, beach & mission target!
+function buildPlayScene(baseState) {
+  const world = buildSeededWorld(baseState?.world);
+
+  // Rex tearing eastbound down Marlin Boulevard (row 32) in a blazing crimson GT
   const playerCar = {
-    x: 18 * TILE + 18,
-    y: 32 * TILE + 24,
-    angle: -0.18,
-    speed: 242,
-    color: '#ef476f',
-    model: 'sports',
+    x: 1310,
+    y: laneY(32, true),
+    angle: 0.04,
+    speed: 300,
+    color: '#e63946',
+    model: 'Marlin GT',
   };
 
-  const camX = Math.round(playerCar.x - VIEW_W * 0.45);
-  const camY = Math.round(playerCar.y - VIEW_H * 0.42);
+  const courierCar = {
+    x: 1610,
+    y: laneY(32, true),
+    angle: 0,
+    speed: 255,
+    color: '#ffd166',
+    model: 'sport',
+    isCourier: true,
+  };
 
   const cars = [
-    playerCar,
-    { x: 21 * TILE + 30, y: 32 * TILE + 44, angle: Math.PI, speed: 120, color: '#2ec4b6', model: 'convertible' },
-    { x: 24 * TILE + 40, y: 32 * TILE + 20, angle: 0, speed: 110, color: '#ffb703', model: 'sedan' },
-    { x: 20 * TILE + 20, y: 29 * TILE + 20, angle: -Math.PI * 0.5, speed: 105, color: '#3a86ff', model: 'coupe' },
-    { x: 20 * TILE + 44, y: 34 * TILE + 26, angle: Math.PI * 0.5, speed: 100, color: '#fb8500', model: 'suv' },
-    { x: 16 * TILE + 44, y: 30 * TILE + 12, angle: Math.PI * 0.5, speed: 95, color: '#f4f7fa', model: 'sedan' },
-    { x: 14 * TILE + 20, y: 36 * TILE + 20, angle: 0, speed: 130, color: '#06d6a0', model: 'convertible' },
-    { x: 22 * TILE + 15, y: 36 * TILE + 44, angle: Math.PI, speed: 115, color: '#9b5de5', model: 'coupe' },
-    { x: 26 * TILE + 12, y: 36 * TILE + 20, angle: 0, speed: 95, color: '#ffd166', model: 'sedan' },
+    courierCar,
+    { x: 1465, y: laneY(32, false), angle: Math.PI, speed: 150, color: '#00b4d8', model: 'coupe' },
+    { x: 1120, y: laneY(32, false), angle: Math.PI, speed: 145, color: '#f1faee', model: 'sedan' },
+    { x: 970, y: laneY(32, true), angle: 0, speed: 130, color: '#2ec4b6', model: 'convertible' },
+    { x: 1190, y: laneY(36, true), angle: 0, speed: 135, color: '#f77f00', model: 'coupe' },
+    { x: 1490, y: laneY(36, false), angle: Math.PI, speed: 120, color: '#f15bb5', model: 'convertible' },
+    { x: 1680, y: laneY(36, true), angle: 0, speed: 140, color: '#ffd166', model: 'taxi' },
+    { x: 1080, y: laneY(28, true), angle: 0, speed: 135, color: '#9b5de5', model: 'sedan' },
+    { x: 1540, y: laneY(28, false), angle: Math.PI, speed: 140, color: '#3a86ff', model: 'sport' },
+    { x: laneX(16, false), y: 2175, angle: Math.PI / 2, speed: 115, color: '#ff6b6b', model: 'coupe' },
+    { x: laneX(20, true), y: 2210, angle: -Math.PI / 2, speed: 125, color: '#ffd166', model: 'taxi' },
+    { x: laneX(24, true), y: 1930, angle: -Math.PI / 2, speed: 130, color: '#2ec4b6', model: 'sedan' },
   ];
 
+  // Two Marlin Bay PD cruisers actively chasing with sirens flashing
   const police = [
-    { x: 15 * TILE + 38, y: 32 * TILE + 28, angle: -0.04, speed: 230, model: 'police', siren: true },
-    { x: 16 * TILE + 22, y: 34 * TILE + 18, angle: -Math.PI * 0.48, speed: 215, model: 'police', siren: true },
-    { x: 24 * TILE + 42, y: 28 * TILE + 30, angle: Math.PI * 0.5, speed: 190, model: 'police', siren: true },
-  ];
-
-  const peds = [
-    { x: 17 * TILE + 18, y: 32 * TILE - 5, angle: 0.15, speed: 28, color: '#ffd166' },
-    { x: 19 * TILE + 14, y: 33 * TILE + 5, angle: -2.9, speed: 34, color: '#4ecdc4' },
-    { x: 21 * TILE + 22, y: 32 * TILE - 5, angle: 0.1, speed: 26, color: '#ff6b6b' },
-    { x: 22 * TILE + 40, y: 33 * TILE + 5, angle: Math.PI, speed: 30, color: '#ffffff' },
-    { x: 16 * TILE - 5, y: 33 * TILE + 30, angle: Math.PI * 0.5, speed: 24, color: '#b388eb' },
-    { x: 19 * TILE + 40, y: 37 * TILE + 12, angle: 0.15, speed: 25, color: '#7ae582' },
-    { x: 23 * TILE + 10, y: 37 * TILE + 14, angle: Math.PI - 0.1, speed: 24, color: '#f78c6b' },
-    { x: 15 * TILE + 24, y: 37 * TILE + 12, angle: 0.2, speed: 20, color: '#5aa9e6' },
-    { x: 25 * TILE + 32, y: 33 * TILE + 5, angle: -0.2, speed: 22, color: '#ffd166' },
-  ];
-
-  const skids = [
-    { x1: playerCar.x - 56, y1: playerCar.y + 12, x2: playerCar.x - 16, y2: playerCar.y + 8 },
-    { x1: playerCar.x - 52, y1: playerCar.y - 4, x2: playerCar.x - 12, y2: playerCar.y - 8 },
+    { x: 1148, y: laneY(32, true) - 3, angle: 0.03, speed: 295 },
+    { x: laneX(20, false), y: 1968, angle: Math.PI / 2 - 0.12, speed: 240 },
+    { x: 960, y: laneY(36, true), angle: 0, speed: 210 },
   ];
 
   const state = {
-    time: 12.6,
-    lighting: 'day',
+    time: 12.42,
     world,
     player: {
       x: playerCar.x,
@@ -484,121 +215,365 @@ function buildPlayScene(world) {
       speed: playerCar.speed,
       onFoot: false,
       health: 86,
-      money: 650,
+      money: 1450,
       weapon: 'pistol',
     },
     car: playerCar,
     cars,
-    peds,
+    peds: buildAmbientPeds(29),
     police,
-    skids,
-    wanted: 2,
+    wanted: 3,
     mission: {
-      id: 'delivery',
-      name: 'First Delivery',
+      id: 2,
+      name: 'Tail the Courier',
       stage: 1,
-      objective: 'Deliver the package to the Marina Pier drop-off',
-      target: { x: 24 * TILE + 32, y: 36 * TILE + 32 },
+      objective: 'Keep the gold courier car in sight — 14s remaining',
+      target: { x: courierCar.x, y: courierCar.y },
       done: false,
     },
-    score: 1420,
+    score: 1850,
     gameOver: false,
     paused: false,
   };
 
-  return { state, camera: { x: camX, y: camY } };
+  // Show action-packed downtown boulevard + oceanfront beach strip in the lower frame
+  const camera = { x: 740, y: 1790 };
+  return { state, camera };
 }
 
-function buildEndScene(world) {
-  // Golden-hour sunset arrival at the Marina Pier drop-off with mission complete overlay
+function buildEndScene(baseState) {
+  const world = buildSeededWorld(baseState?.world);
+
   const playerCar = {
-    x: 22 * TILE + 32,
-    y: 36 * TILE + 32,
-    angle: 0.22,
+    x: 1410,
+    y: laneY(36, true),
+    angle: 0.14,
     speed: 0,
-    color: '#ef476f',
-    model: 'sports',
+    color: '#e63946',
+    model: 'Marlin GT',
   };
 
-  const camX = Math.round(playerCar.x - VIEW_W * 0.5);
-  const camY = Math.round(playerCar.y - VIEW_H * 0.62);
-
   const cars = [
-    playerCar,
-    { x: 18 * TILE + 20, y: 36 * TILE + 20, angle: 0, speed: 85, color: '#2ec4b6', model: 'convertible' },
-    { x: 26 * TILE + 30, y: 36 * TILE + 44, angle: Math.PI, speed: 95, color: '#ffb703', model: 'sedan' },
-    { x: 20 * TILE + 44, y: 33 * TILE + 20, angle: Math.PI * 0.5, speed: 90, color: '#3a86ff', model: 'coupe' },
-    { x: 24 * TILE + 20, y: 32 * TILE + 20, angle: 0, speed: 100, color: '#f4f7fa', model: 'suv' },
-  ];
-
-  const peds = [
-    { x: 21 * TILE + 40, y: 37 * TILE + 15, angle: 0.2, speed: 18, color: '#ffd166' },
-    { x: 23 * TILE + 18, y: 37 * TILE + 14, angle: 2.9, speed: 16, color: '#4ecdc4' },
-    { x: 24 * TILE + 14, y: 37 * TILE + 16, angle: -2.6, speed: 20, color: '#ff6b6b' },
-    { x: 19 * TILE + 28, y: 37 * TILE + 16, angle: 0.4, speed: 22, color: '#ffffff' },
+    { x: 1090, y: laneY(36, false), angle: Math.PI, speed: 120, color: '#2ec4b6', model: 'convertible' },
+    { x: 1650, y: laneY(36, true), angle: 0, speed: 110, color: '#ffd166', model: 'taxi' },
+    { x: 1240, y: laneY(32, true), angle: 0, speed: 130, color: '#3a86ff', model: 'coupe' },
+    { x: 1520, y: laneY(32, false), angle: Math.PI, speed: 125, color: '#f77f00', model: 'sedan' },
+    { x: laneX(20, true), y: 2180, angle: -Math.PI / 2, speed: 115, color: '#f15bb5', model: 'convertible' },
   ];
 
   const state = {
-    time: 24.8,
-    lighting: 'dusk',
+    time: 24.6,
     world,
     player: {
-      x: playerCar.x + 28,
-      y: playerCar.y + 16,
-      angle: -0.4,
+      x: playerCar.x,
+      y: playerCar.y,
+      angle: playerCar.angle,
       speed: 0,
-      onFoot: true,
-      health: 92,
-      money: 850,
+      onFoot: false,
+      health: 94,
+      money: 2150,
       weapon: 'pistol',
     },
-    car: null,
+    car: playerCar,
     cars,
-    peds,
+    peds: buildAmbientPeds(53),
     police: [],
     wanted: 0,
     mission: {
-      id: 'delivery',
-      name: 'First Delivery',
+      id: 3,
+      name: 'Lose the Cops',
       stage: 2,
-      objective: 'Delivery complete at Marina Pier',
-      target: { x: 22 * TILE + 32, y: 36 * TILE + 32 },
+      objective: 'Heat cleared',
+      target: { x: 1410, y: 2350 },
       done: true,
     },
-    score: 2150,
+    score: 3400,
     gameOver: false,
     paused: false,
   };
 
-  return { state, camera: { x: camX, y: camY } };
+  const camera = { x: 820, y: 1852 };
+  return { state, camera };
+}
+
+function drawDawnOverlay(ctx, viewW, viewH) {
+  ctx.save();
+
+  // Warm coastal dawn sky glaze (peach-gold from top-right, cool violet-teal shadow bottom-left)
+  const dawn = ctx.createLinearGradient(viewW * 0.85, 0, viewW * 0.15, viewH);
+  dawn.addColorStop(0, 'rgba(255, 166, 98, 0.36)');
+  dawn.addColorStop(0.45, 'rgba(255, 118, 128, 0.16)');
+  dawn.addColorStop(1, 'rgba(11, 32, 56, 0.42)');
+  ctx.fillStyle = dawn;
+  ctx.fillRect(0, 0, viewW, viewH);
+
+  // Soft vignette framing center title card
+  const vig = ctx.createRadialGradient(viewW * 0.5, viewH * 0.46, 180, viewW * 0.5, viewH * 0.5, viewW * 0.68);
+  vig.addColorStop(0, 'rgba(8, 22, 38, 0.08)');
+  vig.addColorStop(1, 'rgba(5, 15, 28, 0.64)');
+  ctx.fillStyle = vig;
+  ctx.fillRect(0, 0, viewW, viewH);
+
+  // Center frosted title card
+  const cw = 640;
+  const ch = 368;
+  const cx = (viewW - cw) * 0.5;
+  const cy = (viewH - ch) * 0.5 - 10;
+
+  ctx.fillStyle = 'rgba(9, 22, 38, 0.84)';
+  roundRectPath(ctx, cx, cy, cw, ch, 20);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255, 209, 102, 0.48)';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // Top sunset accent bar
+  const barGrad = ctx.createLinearGradient(cx, 0, cx + cw, 0);
+  barGrad.addColorStop(0, '#36d6cf');
+  barGrad.addColorStop(0.5, '#ffd166');
+  barGrad.addColorStop(1, '#ff6b6b');
+  ctx.fillStyle = barGrad;
+  roundRectPath(ctx, cx + 2, cy + 2, cw - 4, 5, 3);
+  ctx.fill();
+
+  // Kicker pill
+  const kw = 248;
+  ctx.fillStyle = 'rgba(54, 214, 207, 0.16)';
+  roundRectPath(ctx, viewW * 0.5 - kw * 0.5, cy + 26, kw, 26, 13);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(54, 214, 207, 0.45)';
+  ctx.lineWidth = 1.2;
+  ctx.stroke();
+
+  ctx.fillStyle = '#8af5ee';
+  ctx.font = '800 11px "Avenir Next", system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('COASTAL OPEN-WORLD CRIME', viewW * 0.5, cy + 39);
+
+  // Hero MARLIN BAY title
+  const titleGrad = ctx.createLinearGradient(0, cy + 68, 0, cy + 144);
+  titleGrad.addColorStop(0, '#fff7dc');
+  titleGrad.addColorStop(0.5, '#ffd166');
+  titleGrad.addColorStop(1, '#ff7854');
+
+  ctx.save();
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.48)';
+  ctx.shadowBlur = 16;
+  ctx.shadowOffsetY = 5;
+  ctx.fillStyle = titleGrad;
+  ctx.font = '900 72px "Avenir Next", "Segoe UI", system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  ctx.fillText(CITY_NAME.toUpperCase(), viewW * 0.5, cy + 66);
+  ctx.restore();
+
+  // One-line story hook
+  ctx.fillStyle = '#d3e6f0';
+  ctx.font = '500 16px "Avenir Next", system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(
+    `${PLAYER_NAME} hit the sunlit strip with empty pockets — run jobs, outrun the heat, own the bay.`,
+    viewW * 0.5,
+    cy + 158
+  );
+
+  // Compact controls bar inside title card
+  const ctrlW = 556;
+  const ctrlX = viewW * 0.5 - ctrlW * 0.5;
+  const ctrlY = cy + 194;
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.06)';
+  roundRectPath(ctx, ctrlX, ctrlY, ctrlW, 46, 10);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  ctx.fillStyle = '#eaf6fb';
+  ctx.font = '700 13px "Avenir Next", system-ui, sans-serif';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(
+    'WASD Drive   ·   E Enter/Exit Car   ·   F Attack   ·   Space Drift   ·   P Pause   ·   M Missions',
+    viewW * 0.5,
+    ctrlY + 23
+  );
+
+  // Glowing CLICK TO START button
+  const btnW = 264;
+  const btnH = 54;
+  const btnX = viewW * 0.5 - btnW * 0.5;
+  const btnY = cy + 266;
+  const btnGrad = ctx.createLinearGradient(btnX, btnY, btnX + btnW, btnY + btnH);
+  btnGrad.addColorStop(0, '#ff7a59');
+  btnGrad.addColorStop(1, '#ffc14d');
+
+  ctx.save();
+  ctx.shadowColor = 'rgba(255, 130, 85, 0.45)';
+  ctx.shadowBlur = 22;
+  ctx.fillStyle = btnGrad;
+  roundRectPath(ctx, btnX, btnY, btnW, btnH, 12);
+  ctx.fill();
+  ctx.restore();
+
+  ctx.fillStyle = '#0e1928';
+  ctx.font = '900 18px "Avenir Next", system-ui, sans-serif';
+  ctx.fillText('▶  CLICK TO START', viewW * 0.5, btnY + btnH * 0.5 + 1);
+
+  ctx.restore();
+}
+
+function drawMissionCompleteOverlay(ctx, state, viewW, viewH) {
+  ctx.save();
+
+  // Golden hour warm finish wash + soft focus vignette
+  const wash = ctx.createLinearGradient(0, 0, viewW, viewH);
+  wash.addColorStop(0, 'rgba(255, 198, 92, 0.16)');
+  wash.addColorStop(1, 'rgba(8, 22, 38, 0.56)');
+  ctx.fillStyle = wash;
+  ctx.fillRect(0, 0, viewW, viewH);
+
+  // Celebratory card
+  const cw = 580;
+  const ch = 392;
+  const cx = (viewW - cw) * 0.5;
+  const cy = (viewH - ch) * 0.5;
+
+  ctx.fillStyle = 'rgba(9, 23, 38, 0.9)';
+  roundRectPath(ctx, cx, cy, cw, ch, 20);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(46, 230, 138, 0.55)';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // Top emerald-gold bar
+  const barGrad = ctx.createLinearGradient(cx, 0, cx + cw, 0);
+  barGrad.addColorStop(0, '#2ee68a');
+  barGrad.addColorStop(0.5, '#ffd166');
+  barGrad.addColorStop(1, '#36d6cf');
+  ctx.fillStyle = barGrad;
+  roundRectPath(ctx, cx + 2, cy + 2, cw - 4, 5, 3);
+  ctx.fill();
+
+  // Kicker badge
+  ctx.fillStyle = 'rgba(255, 209, 102, 0.16)';
+  roundRectPath(ctx, viewW * 0.5 - 92, cy + 26, 184, 26, 13);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255, 209, 102, 0.5)';
+  ctx.lineWidth = 1.2;
+  ctx.stroke();
+
+  ctx.fillStyle = '#ffe082';
+  ctx.font = '800 11px "Avenir Next", system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('JOB CLEARED · MARLIN BAY', viewW * 0.5, cy + 39);
+
+  // Headline
+  const hGrad = ctx.createLinearGradient(0, cy + 66, 0, cy + 120);
+  hGrad.addColorStop(0, '#f3fff8');
+  hGrad.addColorStop(0.5, '#6df5b2');
+  hGrad.addColorStop(1, '#2ec4b6');
+  ctx.fillStyle = hGrad;
+  ctx.font = '900 46px "Avenir Next", system-ui, sans-serif';
+  ctx.textBaseline = 'top';
+  ctx.fillText('MISSION COMPLETE', viewW * 0.5, cy + 68);
+
+  // Mission subtitle
+  ctx.fillStyle = '#d3e7f2';
+  ctx.font = '700 18px "Avenir Next", system-ui, sans-serif';
+  ctx.fillText(`"${state.mission?.name || 'Lose the Cops'}" — Heat Escaped Cleanly`, viewW * 0.5, cy + 126);
+
+  // Big gleaming reward pill
+  const rw = 216;
+  const rh = 52;
+  ctx.fillStyle = 'rgba(46, 230, 138, 0.16)';
+  roundRectPath(ctx, viewW * 0.5 - rw * 0.5, cy + 164, rw, rh, 26);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(46, 230, 138, 0.6)';
+  ctx.lineWidth = 1.8;
+  ctx.stroke();
+
+  ctx.fillStyle = '#5ef5ab';
+  ctx.font = '900 32px "Avenir Next", system-ui, sans-serif';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('+$500', viewW * 0.5, cy + 190);
+
+  // 3 Stat Tiles
+  const stats = [
+    ['BANK', '$' + (state.player?.money ?? 2150).toLocaleString('en-US'), '#4ef0a3'],
+    ['SCORE', (state.score ?? 3400).toLocaleString('en-US'), '#ffd166'],
+    ['HEAT', 'CLEARED', '#79e6e0'],
+  ];
+  const tileW = 152;
+  const tileH = 62;
+  const gap = 16;
+  const rowX = viewW * 0.5 - (tileW * 3 + gap * 2) * 0.5;
+  const rowY = cy + 234;
+
+  for (let i = 0; i < stats.length; i++) {
+    const tx = rowX + i * (tileW + gap);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.06)';
+    roundRectPath(ctx, tx, rowY, tileW, tileH, 11);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    ctx.fillStyle = '#8eb3c7';
+    ctx.font = '700 10px "Avenir Next", system-ui, sans-serif';
+    ctx.textBaseline = 'top';
+    ctx.fillText(stats[i][0], tx + tileW * 0.5, rowY + 11);
+
+    ctx.fillStyle = stats[i][2];
+    ctx.font = '900 22px "Avenir Next", system-ui, sans-serif';
+    ctx.fillText(stats[i][1], tx + tileW * 0.5, rowY + 28);
+  }
+
+  // Continue CTA button
+  const btnW = 224;
+  const btnH = 48;
+  const btnX = viewW * 0.5 - btnW * 0.5;
+  const btnY = cy + 318;
+  const btnGrad = ctx.createLinearGradient(btnX, btnY, btnX + btnW, btnY + btnH);
+  btnGrad.addColorStop(0, '#2ee68a');
+  btnGrad.addColorStop(1, '#36d6cf');
+  ctx.fillStyle = btnGrad;
+  roundRectPath(ctx, btnX, btnY, btnW, btnH, 11);
+  ctx.fill();
+
+  ctx.fillStyle = '#072126';
+  ctx.font = '900 16px "Avenir Next", system-ui, sans-serif';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('CONTINUE', viewW * 0.5, btnY + btnH * 0.5 + 1);
+
+  ctx.restore();
 }
 
 export function renderShot(ctx, state, shot) {
   if (!ctx) return;
-
-  // Hide any active DOM overlay so canvas screenshots never double-render UI
-  hideScreens();
-
   const viewW = ctx.canvas?.width || VIEW_W;
   const viewH = ctx.canvas?.height || VIEW_H;
-  const world = buildShotWorld();
-  const kind = String(shot || 'play').toLowerCase();
 
-  if (kind === 'start') {
-    const { state: shotState, camera } = buildStartScene(world);
-    render(ctx, shotState, camera);
-    drawTitleOverlay(ctx, viewW, viewH);
-  } else if (kind === 'end') {
-    const { state: shotState, camera } = buildEndScene(world);
-    render(ctx, shotState, camera);
-    drawHUD(ctx, shotState);
-    drawMinimap(ctx, shotState);
-    drawMissionCompleteOverlay(ctx, viewW, viewH);
+  // Ensure DOM overlays do not collide with deterministic canvas screenshot rendering
+  hideScreens();
+
+  const key = String(shot || 'play').toLowerCase();
+
+  if (key === 'start') {
+    const { state: s, camera } = buildStartScene(state);
+    render(ctx, s, camera);
+    drawDawnOverlay(ctx, viewW, viewH);
+  } else if (key === 'end') {
+    const { state: s, camera } = buildEndScene(state);
+    render(ctx, s, camera);
+    drawHUD(ctx, s);
+    drawMinimap(ctx, s);
+    drawMissionCompleteOverlay(ctx, s, viewW, viewH);
   } else {
-    const { state: shotState, camera } = buildPlayScene(world);
-    render(ctx, shotState, camera);
-    drawHUD(ctx, shotState);
-    drawMinimap(ctx, shotState);
+    const { state: s, camera } = buildPlayScene(state);
+    render(ctx, s, camera);
+    drawHUD(ctx, s);
+    drawMinimap(ctx, s);
   }
 
   if (typeof window !== 'undefined') {

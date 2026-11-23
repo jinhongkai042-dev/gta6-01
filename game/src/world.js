@@ -1,97 +1,102 @@
-import { ROAD_EVERY, SEED, TILE, WORLD_PX, WORLD_TILES } from './config.js';
+import { TILE, WORLD_TILES, WORLD_PX, ROAD_EVERY, SEED } from './config.js';
 
-const roofColors = ['#ab8872', '#728997', '#bd907f', '#74968c', '#9291a6', '#b5a485', '#8499a6'];
-const roadPointSeeds = new WeakMap();
+const GRID = ROAD_EVERY * TILE;
+const ROOFS = ['#b78976', '#71918e', '#ceaa83', '#9b818d', '#8897a5', '#bc9a8f'];
+const roadRandom = new WeakMap();
 
 function generator(seed) {
+  let bits = seed >>> 0;
   return () => {
-    seed = (Math.imul(1664525, seed) + 1013904223) >>> 0;
-    return seed / 0x100000000;
+    bits = (Math.imul(1664525, bits) + 1013904223) >>> 0;
+    return bits / 4294967296;
   };
-}
-
-function fillBlock(buildings, left, top, right, bottom, random) {
-  // The continuous strip between the asphalt and each lot is the sidewalk.
-  const pavement = 28;
-  const plots = [{ x: left + pavement, y: top + pavement,
-    w: right - left - pavement * 2, h: bottom - top - pavement * 2 }];
-  const lotCount = 1 + Math.floor(random() * 4);
-  while (plots.length < lotCount) {
-    plots.sort((a, b) => b.w * b.h - a.w * a.h);
-    const a = plots[0];
-    const splitX = a.w === a.h ? random() < 0.5 : a.w > a.h;
-    const length = splitX ? a.w : a.h;
-    const alley = 8 + Math.floor(random() * 6);
-    const cut = Math.floor((length - alley) * (0.42 + random() * 0.16));
-    const b = { ...a };
-    if (splitX) {
-      a.w = cut;
-      b.x += cut + alley;
-      b.w = length - cut - alley;
-    } else {
-      a.h = cut;
-      b.y += cut + alley;
-      b.h = length - cut - alley;
-    }
-    plots.push(b);
-  }
-  for (const plot of plots) {
-    plot.w -= Math.floor(random() * 6);
-    plot.h -= Math.floor(random() * 6);
-    plot.color = roofColors[Math.floor(random() * roofColors.length)];
-    buildings.push(plot);
-  }
 }
 
 export function buildWorld() {
   const random = generator(SEED);
-  const roads = Array.from({ length: WORLD_TILES }, (_, row) =>
-    Array.from({ length: WORLD_TILES }, (_, col) => row % ROAD_EVERY === 0 || col % ROAD_EVERY === 0));
-  const buildings = [];
-  for (let row = 0; row < WORLD_TILES; row += ROAD_EVERY) {
-    for (let col = 0; col < WORLD_TILES; col += ROAD_EVERY) {
-      fillBlock(buildings, (col + 1) * TILE, (row + 1) * TILE,
-        Math.min(col + ROAD_EVERY, WORLD_TILES) * TILE,
-        Math.min(row + ROAD_EVERY, WORLD_TILES) * TILE, random);
+  const world = {
+    tileSize: TILE, w: WORLD_PX, h: WORLD_PX, roads: [], sidewalks: [], buildings: [],
+    spawn: { x: Math.floor(WORLD_TILES / (2 * ROAD_EVERY)) * GRID + TILE * 1.5,
+             y: Math.floor(WORLD_TILES / (2 * ROAD_EVERY)) * GRID + TILE / 2, angle: 0 },
+  };
+  roadRandom.set(world, generator(SEED ^ 0xa901));
+  for (let line = 0; line < WORLD_PX; line += GRID) {
+    world.roads.push({ x: line, y: 0, w: TILE, h: WORLD_PX });
+    world.roads.push({ x: 0, y: line, w: WORLD_PX, h: TILE });
+  }
+
+  function building(x, y, w, h) {
+    const inset = Math.floor(random() * 6);
+    world.buildings.push({
+      x: x + inset, y, w: w - 2 * inset, h,
+      color: ROOFS[Math.floor(random() * ROOFS.length)],
+    });
+  }
+
+  // Each block has a continuous pavement ring. Lanes between separate
+  // footprints make some blocks passable on foot from curb to curb.
+  const side = GRID - TILE;
+  const pavement = 22;
+  for (let y = TILE; y < WORLD_PX; y += GRID) {
+    for (let x = TILE; x < WORLD_PX; x += GRID) {
+      world.sidewalks.push(
+        { x, y, w: side, h: pavement },
+        { x, y: y + side - pavement, w: side, h: pavement },
+        { x, y: y + pavement, w: pavement, h: side - 2 * pavement },
+        { x: x + side - pavement, y: y + pavement, w: pavement, h: side - 2 * pavement },
+      );
+      const left = x + pavement;
+      const top = y + pavement;
+      const width = side - 2 * pavement;
+      const layout = Math.floor(random() * 4);
+      const alley = 32;
+      const cut = Math.floor(width * (0.32 + 0.18 * random()));
+      const rest = width - cut - alley;
+      if (layout === 0) {
+        building(left, top, width, width);
+      } else if (layout === 1) {
+        building(left, top, width, cut);
+        building(left, top + cut + alley, width, rest);
+      } else {
+        building(left, top, cut, width);
+        if (layout === 2) {
+          building(left + cut + alley, top, rest, width);
+        } else {
+          building(left + cut + alley, top, rest, rest);
+          building(left + cut + alley, top + rest + alley, rest, cut);
+        }
+      }
     }
   }
-  const centerLine = Math.floor(WORLD_TILES / (2 * ROAD_EVERY)) * ROAD_EVERY;
-  const spawn = { x: (centerLine - 1) * TILE, y: (centerLine + 0.5) * TILE, angle: 0 };
-  return { tileSize: TILE, w: WORLD_PX, h: WORLD_PX, roads, buildings, spawn };
+  return world;
 }
 
 export function isRoad(world, x, y) {
-  if (!(x >= 0 && y >= 0 && x < world.w && y < world.h)) return false;
-  return world.roads[Math.floor(y / world.tileSize)][Math.floor(x / world.tileSize)];
+  if (x < 0 || y < 0 || x >= world.w || y >= world.h) return false;
+  return Math.floor(x / TILE) % ROAD_EVERY === 0 || Math.floor(y / TILE) % ROAD_EVERY === 0;
 }
 
 export function isBlocked(world, x, y, r = 0) {
-  if (x - r < 0 || y - r < 0 || x + r > world.w || y + r > world.h ||
-      x >= world.w || y >= world.h) return true;
-  for (const b of world.buildings) {
-    if (x + r < b.x || x - r > b.x + b.w || y + r < b.y || y - r > b.y + b.h) continue;
+  if (x < r || y < r || x + r >= world.w || y + r >= world.h) return true;
+  return world.buildings.some(b => {
     const dx = Math.max(b.x - x, 0, x - b.x - b.w);
     const dy = Math.max(b.y - y, 0, y - b.y - b.h);
-    if (dx * dx + dy * dy <= r * r) return true;
-  }
-  return false;
+    return dx * dx + dy * dy <= r * r;
+  });
 }
 
 export function randomRoadPoint(world) {
-  let random = roadPointSeeds.get(world);
+  let random = roadRandom.get(world);
   if (!random) {
-    random = generator(SEED ^ 0x6578af);
-    roadPointSeeds.set(world, random);
+    random = generator(SEED ^ 0xa901);
+    roadRandom.set(world, random);
   }
-  const horizontal = random() < 0.5;
-  const span = horizontal ? world.w : world.h;
-  const crossSpan = horizontal ? world.h : world.w;
-  const step = world.tileSize * ROAD_EVERY;
-  const positive = random() < 0.5;
-  const line = Math.floor(random() * Math.ceil(crossSpan / step)) * step + world.tileSize / 2;
-  const lane = (positive ? 1 : -1) * world.tileSize / 5;
-  const along = world.tileSize / 2 + random() * (span - world.tileSize);
-  return horizontal
-    ? { x: along, y: line + lane, angle: positive ? 0 : Math.PI }
-    : { x: line - lane, y: along, angle: positive ? Math.PI / 2 : -Math.PI / 2 };
+  const dir = Math.floor(random() * 4);
+  const horizontal = dir % 2 === 0;
+  const across = horizontal ? world.h : world.w;
+  const along = horizontal ? world.w : world.h;
+  const center = Math.floor(random() * Math.ceil(across / GRID)) * GRID + TILE / 2;
+  const lane = center + (dir < 2 ? 1 : -1) * (horizontal ? 1 : -1) * TILE / 4;
+  const position = TILE / 2 + random() * (along - TILE);
+  return { x: horizontal ? position : lane, y: horizontal ? lane : position, angle: dir * Math.PI / 2 };
 }

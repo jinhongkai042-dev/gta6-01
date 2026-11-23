@@ -1,6 +1,6 @@
-// Package the city and its captured scenes together for the offline judge.
-// Assemble the Marlin Bay entry dossier for the gta6-01 bounty.
-// Stage the playable city and its screenshot gallery beside the judge-facing JSON.
+// Build the offline edition of Marlin Bay for the gta6-01 bounty.
+// Copy the browser game and its gallery into the output directory.
+// Write the dossier that points the judge to those files.
 // A working gta6-01 entry (Node 22, standard library only): the game is this directory's
 // game/ folder, plain static files a desktop browser loads offline (game/index.html and its ES
 // modules, no library and no network request), and the program hands it in. It copies game/ and

@@ -1,101 +1,110 @@
 let context;
-let output;
+let master;
+let noise;
 let engine;
-let engineGain;
-let noiseBuffer;
 
 export function initAudio() {
   try {
-    if (!context) {
-      const Audio = globalThis.AudioContext || globalThis.webkitAudioContext;
-      if (!Audio) return;
+    const Audio = globalThis.AudioContext || globalThis.webkitAudioContext;
+    if (!Audio) return;
+    if (!context || context.state === 'closed') {
       context = new Audio();
-      output = context.createGain();
-      output.gain.value = 0.24;
-      output.connect(context.destination);
-      engine = context.createOscillator();
-      engineGain = context.createGain();
-      engine.type = 'triangle';
-      engine.frequency.value = 44;
-      engineGain.gain.value = 0;
-      engine.connect(engineGain);
-      engineGain.connect(output);
-      engine.start();
+      master = context.createGain();
+      master.gain.value = 0.32;
+      master.connect(context.destination);
+      noise = context.createBuffer(1, Math.ceil(context.sampleRate * 0.24), context.sampleRate);
+      const channel = noise.getChannelData(0);
+      for (let i = 0; i < channel.length; i++) channel[i] = Math.random() * 2 - 1;
+      engine = null;
     }
     if (context.state !== 'running') context.resume().catch(() => {});
   } catch {
-    // Browsers can block audio while the game is embedded.
+    context = null;
   }
 }
 
-function envelope(source, start, duration, volume) {
+function envelope(source, when, duration, volume) {
   const gain = context.createGain();
-  gain.gain.setValueAtTime(0.001, start);
-  gain.gain.exponentialRampToValueAtTime(volume, start + 0.008);
-  gain.gain.exponentialRampToValueAtTime(0.001, start + duration);
+  gain.gain.setValueAtTime(0.001, when);
+  gain.gain.exponentialRampToValueAtTime(volume, when + 0.008);
+  gain.gain.exponentialRampToValueAtTime(0.001, when + duration);
   source.connect(gain);
-  gain.connect(output);
+  gain.connect(master);
   source.onended = () => {
     source.disconnect();
     gain.disconnect();
   };
-  source.start(start);
-  source.stop(start + duration + 0.01);
+  source.start(when);
+  source.stop(when + duration + 0.01);
 }
 
-function tone(type, from, to, start, duration, volume) {
+function note(type, from, to, when, duration, volume) {
   const osc = context.createOscillator();
   osc.type = type;
-  osc.frequency.setValueAtTime(from, start);
-  osc.frequency.exponentialRampToValueAtTime(to, start + duration);
-  envelope(osc, start, duration, volume);
+  osc.frequency.setValueAtTime(from, when);
+  osc.frequency.exponentialRampToValueAtTime(to, when + duration);
+  envelope(osc, when, duration, volume);
 }
 
-function noise(start, duration, volume) {
-  if (!noiseBuffer) {
-    noiseBuffer = context.createBuffer(1, Math.ceil(context.sampleRate * 0.35), context.sampleRate);
-    const samples = noiseBuffer.getChannelData(0);
-    for (let i = 0; i < samples.length; i++) samples[i] = Math.random() * 2 - 1;
-  }
+function burst(when, duration, volume) {
   const source = context.createBufferSource();
-  source.buffer = noiseBuffer;
-  envelope(source, start, duration, volume);
+  source.buffer = noise;
+  envelope(source, when, duration, volume);
 }
 
 export function sfx(name) {
-  if (!output || context.state !== 'running') return;
-  const now = context.currentTime;
+  if (context?.state !== 'running') return;
+  const t = context.currentTime;
   switch (name) {
     case 'pickup':
-      tone('sine', 480, 620, now, 0.09, 0.4);
-      tone('sine', 740, 860, now + 0.07, 0.16, 0.38);
+      note('sine', 620, 750, t, 0.09, 0.24);
+      note('sine', 940, 1120, t + 0.09, 0.13, 0.19);
       break;
     case 'crash':
-      noise(now, 0.22, 0.6);
-      tone('triangle', 120, 36, now, 0.22, 0.5);
+      burst(t, 0.21, 0.45);
+      note('triangle', 110, 39, t, 0.23, 0.5);
       break;
     case 'siren':
-      tone('triangle', 440, 770, now, 0.32, 0.36);
-      tone('triangle', 770, 420, now + 0.31, 0.37, 0.36);
+      note('triangle', 475, 850, t, 0.27, 0.16);
+      note('triangle', 850, 475, t + 0.26, 0.29, 0.16);
       break;
     case 'shoot':
-      noise(now, 0.095, 0.8);
-      tone('triangle', 180, 48, now, 0.13, 0.55);
+      burst(t, 0.085, 0.42);
+      note('triangle', 140, 48, t, 0.1, 0.35);
       break;
     case 'click':
-      tone('square', 250, 135, now, 0.035, 0.14);
+      note('square', 340, 180, t, 0.035, 0.1);
       break;
     case 'mission':
-      [330, 415, 494, 660].forEach((hz, i) =>
-        tone('sine', hz, hz, now + i * 0.095, i === 3 ? 0.45 : 0.17, 0.46));
+      [392, 494, 587, 784].forEach((hz, i) => note('sine', hz, hz, t + i * 0.105, 0.22, 0.27));
       break;
   }
 }
 
 export function setEngine(on, speed = 0) {
-  if (!engineGain || !engine) return;
-  const load = Math.min(1, Math.abs(speed) / 300);
-  const now = context.currentTime;
-  engineGain.gain.setTargetAtTime(on ? 0.13 + load * 0.12 : 0, now, 0.055);
-  engine.frequency.setTargetAtTime(42 + load * 84, now, 0.08);
+  if (!context) return;
+  const t = context.currentTime;
+  if (!on || context.state !== 'running') {
+    if (engine) {
+      const { osc, gain } = engine;
+      gain.gain.setTargetAtTime(0.001, t, 0.02);
+      osc.stop(t + 0.1);
+      engine = null;
+    }
+    return;
+  }
+  if (!engine) {
+    const osc = context.createOscillator();
+    const gain = context.createGain();
+    osc.type = 'triangle';
+    gain.gain.value = 0.001;
+    osc.connect(gain);
+    gain.connect(master);
+    osc.onended = () => { osc.disconnect(); gain.disconnect(); };
+    osc.start();
+    engine = { osc, gain };
+  }
+  const throttle = Math.min(1, Math.abs(speed) / 350);
+  engine.osc.frequency.setTargetAtTime(38 + 85 * throttle, t, 0.06);
+  engine.gain.gain.setTargetAtTime(0.11 + 0.08 * throttle, t, 0.05);
 }

@@ -4,25 +4,25 @@
 [![rank](https://make.fun/badge/gta6-01/jinhongkai042-dev/gta6-01/rank.svg)](https://make.fun/bounty/gta6-01)
 [![reward](https://make.fun/badge/gta6-01/jinhongkai042-dev/gta6-01/reward.svg)](https://make.fun/bounty/gta6-01)
 
-The last ferry out of Marlin Bay is counting on Rex, a driver for hire. Take a car, get a roll of film to the docks, tail the buyer of a stolen manifest, and draw the harbor patrol away from the water. Finish all three jobs to earn $1,050. Cash, completed jobs, and your best score carry over in the same browser.
-
-## Play
-
-From the repository root, run `node serve.ts` with Node.js 22. Then open [Marlin Bay](http://localhost:8080/) in a desktop browser. You can also serve `game/` with any static HTTP server.
+Rex drives for hire in a top-down coastal city. Walk to a car, take the wheel and follow the dispatch marker. A fish-market delivery pays $200, a 20-second tail pays $350, and drawing the police away from the night ferry pays $500. After the last payout, the city stays open for free roam.
 
 | Control | Action |
 | --- | --- |
-| WASD or arrow keys | Walk. In a car, accelerate, reverse, and steer. |
-| E | Enter a nearby car or get out. |
-| F | Punch on foot. After collecting the courier pistol, fire in the direction Rex faces. |
-| Space | Handbrake. |
-| P | Pause or resume. |
-| M | Open or close the mission list. Use 1, 2, or 3 to choose a job. |
+| WASD or arrow keys | Walk, accelerate, reverse and steer |
+| E | Enter a nearby car or get out |
+| Space | Handbrake |
+| F | Punch on foot, or fire the pistol after the courier rendezvous |
+| P | Pause or resume |
+| M | Open or close dispatch |
 
-Get out of sight of every patrol to shed one wanted star every ten seconds. At three stars, watch the road ahead for a blockade.
+Police ram on contact and set roadblocks at three stars. Lose sight of every unit for ten seconds to drop a star. Cash, completed jobs and the best score are saved in the browser. Choose **Continue Save** on the title screen to pick up the next unpaid job.
 
-## Screenshots and dossier
+## Run locally
 
-Open the [start](http://localhost:8080/?shot=start), [play](http://localhost:8080/?shot=play), or [end](http://localhost:8080/?shot=end) scene for a deterministic screenshot. Each URL renders one scene at 1280 × 720.
+From the repository root, run `node serve.ts` with a Node.js version that supports TypeScript directly. Open the local address it prints in a desktop browser. You can also serve `game/` as a static directory. Click **Start shift** to enable synthesized sound.
 
-Place three or four 1280 × 720 JPEG captures in `screenshots/`, each at most 256 KiB. The first by filename is the cover. Run `MAKEFUN_OUTPUT_DIR=out node main.ts` from the root to copy the game and captures into `out/` and generate `out/dossier.json`.
+Append `?shot=start`, `?shot=play` or `?shot=end` to the game URL for the three fixed screenshot scenes.
+
+## Build the dossier
+
+Run `MAKEFUN_OUTPUT_DIR=out node main.ts` from the repository root to package the game and its screenshot gallery and write `out/dossier.json`.
